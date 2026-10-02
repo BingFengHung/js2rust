@@ -165,7 +165,44 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(project['Cargo.toml'].includes('tokio = { version = "1", features = ["full"] }'), 'Includes tokio in Cargo.toml dependencies');
 }
 
+// Test 9: ES6 Class -> Rust struct + impl & new Point() -> Point::new()
+{
+  const js = `
+  class BankAccount {
+    constructor(owner, balance) {
+      this.owner = owner;
+      this.balance = balance;
+    }
+
+    deposit(amount) {
+      this.balance += amount;
+    }
+
+    getBalance() {
+      return this.balance;
+    }
+  }
+
+  function main() {
+    const acc = new BankAccount("Alice", 100);
+    acc.deposit(50);
+    console.log("Balance:", acc.getBalance());
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub struct BankAccount {'), 'Emits pub struct BankAccount');
+  assert(rust.includes('pub owner: String,'), 'Infers owner: String');
+  assert(rust.includes('pub balance: i64,'), 'Infers balance: i64');
+  assert(rust.includes('impl BankAccount {'), 'Emits impl BankAccount');
+  assert(rust.includes('pub fn new(owner: String, balance: i64) -> Self'), 'Emits pub fn new constructor');
+  assert(rust.includes('pub fn deposit(&mut self, amount: i64)'), 'Infers &mut self for mutating method deposit');
+  assert(rust.includes('pub fn getBalance(&self) -> i64'), 'Infers &self for read-only method getBalance');
+  assert(rust.includes('let mut acc = BankAccount::new("Alice".to_string(), 100);'), 'Upgrades const acc to let mut and converts "Alice" to String');
+  assert(rust.includes('acc.deposit(50);'), 'Calls acc.deposit(50)');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);
 }
+

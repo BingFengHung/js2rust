@@ -17,6 +17,131 @@ export class RustEmitter {
     this.needDuration = false;
     this.needMpsc = false;
     this.needArcMutex = false;
+    this.classes = new Set();
+    this.classMutatingMethods = new Set();
+    this.mutatedVars = new Set();
+  }
+
+  formatIdentifier(name) {
+    const RUST_KEYWORDS = new Set([
+      'type', 'move', 'match', 'fn', 'loop', 'in', 'ref', 'trait', 'impl',
+      'where', 'struct', 'enum', 'union', 'mod', 'crate', 'pub', 'box', 'yield'
+    ]);
+    if (RUST_KEYWORDS.has(name)) {
+      return `r#${name}`;
+    }
+    return name;
+  }
+
+  doesMethodMutateThis(bodyNode) {
+    let mutates = false;
+    const check = (node) => {
+      if (!node || typeof node !== 'object' || mutates) return;
+
+      if (node.type === 'AssignmentExpression') {
+        if (
+          node.left.type === 'MemberExpression' &&
+          node.left.object.type === 'ThisExpression'
+        ) {
+          mutates = true;
+          return;
+        }
+      }
+
+      if (node.type === 'UpdateExpression') {
+        if (
+          node.argument.type === 'MemberExpression' &&
+          node.argument.object.type === 'ThisExpression'
+        ) {
+          mutates = true;
+          return;
+        }
+      }
+
+      if (
+        node.type === 'CallExpression' &&
+        node.callee.type === 'MemberExpression' &&
+        node.callee.object.type === 'MemberExpression' &&
+        node.callee.object.object.type === 'ThisExpression'
+      ) {
+        const method = node.callee.property.name;
+        if (['push', 'pop', 'reverse', 'sort', 'splice'].includes(method)) {
+          mutates = true;
+          return;
+        }
+      }
+
+      for (const key of Object.keys(node)) {
+        if (key === 'leadingComments' || key === 'trailingComments') continue;
+        const child = node[key];
+        if (Array.isArray(child)) {
+          child.forEach(check);
+        } else if (child && typeof child === 'object') {
+          check(child);
+        }
+      }
+    };
+
+    check(bodyNode);
+    return mutates;
+  }
+
+  collectClasses(programNode) {
+    if (!programNode || !programNode.body) return;
+    this.classes = new Set();
+    this.classMutatingMethods = new Set();
+
+    for (let stmt of programNode.body) {
+      if ((stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration') && stmt.declaration) {
+        stmt = stmt.declaration;
+      }
+
+      if (stmt.type === 'ClassDeclaration') {
+        const className = stmt.id ? stmt.id.name : 'Anonymous';
+        this.classes.add(className);
+
+        const methods = stmt.body.body.filter(
+          (m) => m.type === 'ClassMethod' && m.kind === 'method'
+        );
+
+        for (const method of methods) {
+          if (this.doesMethodMutateThis(method.body)) {
+            this.classMutatingMethods.add(method.key.name);
+          }
+        }
+      }
+    }
+  }
+
+  collectMutatedVars(programNode) {
+    this.mutatedVars = new Set();
+    const check = (node) => {
+      if (!node || typeof node !== 'object') return;
+      if (node.type === 'AssignmentExpression' && node.left.type === 'Identifier') {
+        this.mutatedVars.add(node.left.name);
+      }
+      if (node.type === 'UpdateExpression' && node.argument.type === 'Identifier') {
+        this.mutatedVars.add(node.argument.name);
+      }
+      if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
+        const method = node.callee.property.name;
+        if (
+          ['push', 'pop', 'reverse', 'sort', 'splice'].includes(method) ||
+          (this.classMutatingMethods && this.classMutatingMethods.has(method))
+        ) {
+          if (node.callee.object.type === 'Identifier') {
+            this.mutatedVars.add(node.callee.object.name);
+          }
+        }
+      }
+      for (const k of Object.keys(node)) {
+        if (k === 'leadingComments' || k === 'trailingComments') continue;
+        const child = node[k];
+        if (Array.isArray(child)) child.forEach(check);
+        else if (child && typeof child === 'object') check(child);
+      }
+    };
+    check(programNode);
   }
 
   indent() {
@@ -179,6 +304,9 @@ export class RustEmitter {
       case 'ExportDefaultDeclaration':
         return this.emitExportDefaultDeclaration(node);
 
+      case 'ClassDeclaration':
+        return this.emitClassDeclaration(node);
+
       case 'ImportDeclaration':
         return this.emitImportDeclaration(node);
 
@@ -259,7 +387,13 @@ export class RustEmitter {
         return node.value ? 'true' : 'false';
 
       case 'Identifier':
-        return node.name;
+        return this.formatIdentifier(node.name);
+
+      case 'ThisExpression':
+        return 'self';
+
+      case 'NewExpression':
+        return this.emitNewExpression(node);
 
       case 'ArrowFunctionExpression':
       case 'FunctionExpression':
@@ -281,10 +415,191 @@ export class RustEmitter {
       }
       return this.emitFunctionDeclaration(node.declaration);
     }
+    if (node.declaration.type === 'ClassDeclaration') {
+      return this.emitClassDeclaration(node.declaration);
+    }
     if (node.declaration.type === 'Identifier') {
       return '';
     }
     return `pub static DEFAULT_EXPORT: &str = ${this.emit(node.declaration)};`;
+  }
+
+  emitClassDeclaration(node) {
+    const className = node.id ? node.id.name : 'AnonymousClass';
+
+    const ctor = node.body.body.find(
+      (m) => m.type === 'ClassMethod' && m.kind === 'constructor'
+    );
+    const methods = node.body.body.filter(
+      (m) => m.type === 'ClassMethod' && m.kind === 'method'
+    );
+
+    const fields = new Map();
+    const ctorParams = ctor ? ctor.params : [];
+    const ctorJsdoc = ctor ? parseJSDoc(ctor.leadingComments) : { params: {}, returns: null };
+
+    // Explicit class properties (e.g. class Foo { count = 0; })
+    for (const member of node.body.body) {
+      if (member.type === 'ClassProperty' || member.type === 'PropertyDefinition') {
+        const propName = member.key.name;
+        let propType = this.defaultNumberType;
+        if (member.value) {
+          if (member.value.type === 'NumericLiteral') {
+            propType = Number.isInteger(member.value.value) ? this.defaultNumberType : 'f64';
+          } else if (member.value.type === 'StringLiteral') {
+            propType = 'String';
+          } else if (member.value.type === 'BooleanLiteral') {
+            propType = 'bool';
+          }
+        }
+        fields.set(propName, propType);
+      }
+    }
+
+    // Inspect constructor assignments: this.x = x
+    if (ctor && ctor.body && ctor.body.body) {
+      for (const stmt of ctor.body.body) {
+        if (
+          stmt.type === 'ExpressionStatement' &&
+          stmt.expression.type === 'AssignmentExpression' &&
+          stmt.expression.left.type === 'MemberExpression' &&
+          stmt.expression.left.object.type === 'ThisExpression'
+        ) {
+          const fieldName = stmt.expression.left.property.name;
+          let fieldType = this.defaultNumberType;
+
+          if (stmt.expression.right.type === 'Identifier') {
+            const paramName = stmt.expression.right.name;
+            if (ctorJsdoc.params[paramName]) {
+              fieldType = mapToRustType(ctorJsdoc.params[paramName]);
+            } else if (
+              paramName.toLowerCase().includes('name') ||
+              paramName.toLowerCase().includes('title') ||
+              paramName.toLowerCase().includes('str') ||
+              paramName.toLowerCase().includes('owner') ||
+              paramName.toLowerCase().includes('msg')
+            ) {
+              fieldType = 'String';
+            } else {
+              fieldType = this.defaultNumberType;
+            }
+          } else if (stmt.expression.right.type === 'StringLiteral') {
+            fieldType = 'String';
+          } else if (stmt.expression.right.type === 'BooleanLiteral') {
+            fieldType = 'bool';
+          } else if (stmt.expression.right.type === 'NumericLiteral') {
+            fieldType = Number.isInteger(stmt.expression.right.value) ? this.defaultNumberType : 'f64';
+          }
+
+          fields.set(fieldName, fieldType);
+        }
+      }
+    }
+
+    // Register into this.structs so other parts know it is a struct
+    const structProps = [];
+    for (const [name, type] of fields.entries()) {
+      structProps.push({ name, type });
+    }
+    this.structs.set(className, structProps);
+
+    // Generate Rust Struct
+    let structCode = `${this.indent()}#[derive(Debug, Clone)]\n${this.indent()}pub struct ${className} {\n`;
+    this.withIndent(() => {
+      for (const [name, type] of fields.entries()) {
+        structCode += `${this.indent()}pub ${name}: ${type},\n`;
+      }
+    });
+    structCode += `${this.indent()}}\n\n`;
+
+    // Generate Rust impl block
+    let implCode = `${this.indent()}impl ${className} {\n`;
+
+    this.withIndent(() => {
+      // Constructor
+      if (ctor) {
+        const ctorParamDecls = ctorParams.map((p) => {
+          const pName = p.name;
+          let pType = ctorJsdoc.params[pName] ? mapToRustType(ctorJsdoc.params[pName]) : (fields.get(pName) || this.defaultNumberType);
+          return `${pName}: ${pType}`;
+        }).join(', ');
+
+        implCode += `${this.indent()}pub fn new(${ctorParamDecls}) -> Self {\n`;
+        this.withIndent(() => {
+          implCode += `${this.indent()}Self {\n`;
+          this.withIndent(() => {
+            for (const [name, type] of fields.entries()) {
+              const hasParam = ctorParams.some((p) => p.name === name);
+              if (hasParam) {
+                implCode += `${this.indent()}${name},\n`;
+              } else {
+                const defaultVal = type === 'String' ? 'String::new()' : (type === 'bool' ? 'false' : '0');
+                implCode += `${this.indent()}${name}: ${defaultVal},\n`;
+              }
+            }
+          });
+          implCode += `${this.indent()}}\n`;
+        });
+        implCode += `${this.indent()}}\n\n`;
+      } else {
+        implCode += `${this.indent()}pub fn new() -> Self {\n`;
+        this.withIndent(() => {
+          implCode += `${this.indent()}Self {\n`;
+          this.withIndent(() => {
+            for (const [name, type] of fields.entries()) {
+              const defaultVal = type === 'String' ? 'String::new()' : (type === 'bool' ? 'false' : '0');
+              implCode += `${this.indent()}${name}: ${defaultVal},\n`;
+            }
+          });
+          implCode += `${this.indent()}}\n`;
+        });
+        implCode += `${this.indent()}}\n\n`;
+      }
+
+      // Methods
+      for (const method of methods) {
+        const methodName = method.key.name;
+        const rustMethodName = this.formatIdentifier(methodName);
+        const methodJsdoc = parseJSDoc(method.leadingComments);
+
+        const isMutating = this.doesMethodMutateThis(method.body);
+        const selfParam = isMutating ? '&mut self' : '&self';
+
+        const methodParams = method.params.map((p) => {
+          const pName = p.name;
+          const pType = methodJsdoc.params[pName] ? mapToRustType(methodJsdoc.params[pName]) : this.defaultNumberType;
+          return `${pName}: ${pType}`;
+        });
+
+        const allParams = [selfParam, ...methodParams].join(', ');
+
+        let returnClause = '';
+        if (methodJsdoc.returns && methodJsdoc.returns !== 'void') {
+          returnClause = ` -> ${mapToRustType(methodJsdoc.returns, true)}`;
+        } else if (this.hasReturnWithVal(method.body)) {
+          returnClause = ` -> ${this.defaultNumberType}`;
+        }
+
+        implCode += `${this.indent()}pub fn ${rustMethodName}(${allParams})${returnClause} `;
+        const bodyStr = this.emit(method.body);
+        implCode += `${bodyStr}\n\n`;
+      }
+    });
+
+    implCode = implCode.trimEnd() + `\n${this.indent()}}`;
+
+    return structCode + implCode;
+  }
+
+  emitNewExpression(node) {
+    const callee = this.emit(node.callee);
+    const args = node.arguments.map((arg) => {
+      if (arg.type === 'StringLiteral') {
+        return `"${arg.value}".to_string()`;
+      }
+      return this.emit(arg);
+    }).join(', ');
+    return `${callee}::new(${args})`;
   }
 
   emitClosure(node, isMove = true) {
@@ -323,6 +638,8 @@ export class RustEmitter {
   }
 
   emitProgram(node) {
+    this.collectClasses(node);
+    this.collectMutatedVars(node);
     this.collectSignatures(node, this.rootAst);
 
     const bodyOutput = node.body.map((stmt) => this.emit(stmt)).join('\n\n') + '\n';
@@ -336,8 +653,9 @@ export class RustEmitter {
     if (this.needArcMutex) output += 'use std::sync::{Arc, Mutex};\n';
     if (output) output += '\n';
 
-    // 1. Emit generated Rust Structs from JSDoc @typedef
+    // 1. Emit generated Rust Structs from JSDoc @typedef (excluding classes)
     for (const [name, props] of this.structs.entries()) {
+      if (this.classes.has(name)) continue;
       output += `#[derive(Debug, Clone)]\npub struct ${name} {\n`;
       for (const p of props) {
         output += `    pub ${p.name}: ${p.type},\n`;
@@ -408,7 +726,11 @@ export class RustEmitter {
       } else {
         varName = decl.id.name;
       }
-      const mutPrefix = isConst ? 'let ' : 'let mut ';
+      let needsMut = !isConst;
+      if (isConst && decl.id.name && this.mutatedVars && this.mutatedVars.has(decl.id.name)) {
+        needsMut = true;
+      }
+      const mutPrefix = needsMut ? 'let mut ' : 'let ';
       const initVal = decl.init ? ` = ${this.emit(decl.init)}` : '';
       return `${this.indent()}${mutPrefix}${varName}${initVal};`;
     });

@@ -729,6 +729,7 @@
         <optgroup label="⚡ 非同步與模組 (Async & Export Default)">
           <option value="async_await">⚡ 4. 非同步函數 (async / await & tokio)</option>
           <option value="export_default">📦 5. 預設導出 (export default & import)</option>
+          <option value="oop_classes">🏛️ 6. 類別與方法 (ES6 class -> struct + impl)</option>
         </optgroup>
         <optgroup label="📂 專案架構與型別推導">
           <option value="nested">📂 巢狀資料夾架構 (src/utils/math.js)</option>
@@ -983,6 +984,36 @@ function main() {
  */
 export default function calculator(a, b) {
   return a + b;
+}`
+        }
+      },
+
+      oop_classes: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🏛️ 物件導向：ES6 class 自動轉換為 Rust struct + impl
+class BankAccount {
+  constructor(owner, balance) {
+    this.owner = owner;
+    this.balance = balance;
+  }
+
+  // 靜態分析會自動將修改自身屬性的方法轉換為 (&mut self)
+  deposit(amount) {
+    this.balance += amount;
+  }
+
+  // 僅讀取屬性的方法轉換為 (&self)
+  getBalance() {
+    return this.balance;
+  }
+}
+
+function main() {
+  const acc = new BankAccount("Alice", 100);
+  acc.deposit(50);
+  console.log("Account Owner:", acc.owner);
+  console.log("Updated Balance:", acc.getBalance());
 }`
         }
       },
