@@ -295,6 +295,22 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('article.summarize()'), 'Calls article.summarize()');
 }
 
+// Test 14: Array iterator methods (map, filter, forEach)
+{
+  const js = `
+  function main() {
+    console.log("Hello, World!");
+    const a = [1, 3, 2];
+    const b = a.map(x => {
+      console.log(x);
+    });
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('a.into_iter().map(move |x| {'), 'Translates a.map to a.into_iter().map');
+  assert(rust.includes('.collect::<Vec<_>>()'), 'Collects mapped iterator to Vec');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);

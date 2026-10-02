@@ -682,8 +682,11 @@ export class RustEmitter {
     return code;
   }
 
-  emitClosure(node, isMove = true) {
-    const params = node.params.map((p) => p.name || this.emit(p)).join(', ');
+  emitClosure(node, isMove = true, isRefParam = false) {
+    const params = node.params.map((p) => {
+      const pName = p.name || this.emit(p);
+      return isRefParam ? `&${pName}` : pName;
+    }).join(', ');
     const movePrefix = isMove ? 'move ' : '';
     if (node.body.type === 'BlockStatement') {
       const body = this.emit(node.body);
@@ -974,6 +977,55 @@ export class RustEmitter {
       if (method === 'includes') {
         const val = this.emit(node.arguments[0]);
         return `${obj}.contains(&${val})`;
+      }
+      if (method === 'map') {
+        const fnArg = this.emit(node.arguments[0]);
+        return `${obj}.into_iter().map(${fnArg}).collect::<Vec<_>>()`;
+      }
+      if (method === 'filter') {
+        let fnArg = '';
+        if (node.arguments[0] && (node.arguments[0].type === 'ArrowFunctionExpression' || node.arguments[0].type === 'FunctionExpression')) {
+          fnArg = this.emitClosure(node.arguments[0], true, true);
+        } else {
+          fnArg = this.emit(node.arguments[0]);
+        }
+        return `${obj}.into_iter().filter(${fnArg}).collect::<Vec<_>>()`;
+      }
+      if (method === 'forEach') {
+        const fnArg = this.emit(node.arguments[0]);
+        return `${obj}.iter().for_each(${fnArg})`;
+      }
+      if (method === 'reduce') {
+        const fnArg = this.emit(node.arguments[0]);
+        const initVal = node.arguments[1] ? this.emit(node.arguments[1]) : '0';
+        return `${obj}.into_iter().fold(${initVal}, ${fnArg})`;
+      }
+      if (method === 'some') {
+        let fnArg = '';
+        if (node.arguments[0] && (node.arguments[0].type === 'ArrowFunctionExpression' || node.arguments[0].type === 'FunctionExpression')) {
+          fnArg = this.emitClosure(node.arguments[0], true, true);
+        } else {
+          fnArg = this.emit(node.arguments[0]);
+        }
+        return `${obj}.into_iter().any(${fnArg})`;
+      }
+      if (method === 'every') {
+        let fnArg = '';
+        if (node.arguments[0] && (node.arguments[0].type === 'ArrowFunctionExpression' || node.arguments[0].type === 'FunctionExpression')) {
+          fnArg = this.emitClosure(node.arguments[0], true, true);
+        } else {
+          fnArg = this.emit(node.arguments[0]);
+        }
+        return `${obj}.into_iter().all(${fnArg})`;
+      }
+      if (method === 'find') {
+        let fnArg = '';
+        if (node.arguments[0] && (node.arguments[0].type === 'ArrowFunctionExpression' || node.arguments[0].type === 'FunctionExpression')) {
+          fnArg = this.emitClosure(node.arguments[0], true, true);
+        } else {
+          fnArg = this.emit(node.arguments[0]);
+        }
+        return `${obj}.into_iter().find(${fnArg})`;
       }
       if (method === 'send') {
         const val = this.emit(node.arguments[0]);
