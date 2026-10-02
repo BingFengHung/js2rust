@@ -138,14 +138,20 @@ export function generateRustProject(files, options = {}) {
 
   const project = {};
 
-  // 1. Cargo.toml
+  // 1. Cargo.toml (Include tokio if async/await is detected)
+  const hasAsync = Object.values(files).some((code) => /\basync\s+function\b|\bawait\b/.test(code));
+  let dependencies = '';
+  if (hasAsync) {
+    dependencies = 'tokio = { version = "1", features = ["full"] }\n';
+  }
+
   project['Cargo.toml'] = `[package]
 name = "js2rust_app"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-`;
+${dependencies}`;
 
   const mainFilename = findMainFilename(files);
 

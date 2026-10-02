@@ -52,8 +52,8 @@ export class RustEmitter {
     if (!programNode || !programNode.body) return;
 
     for (let stmt of programNode.body) {
-      // Unwrap ExportNamedDeclaration if present
-      if (stmt.type === 'ExportNamedDeclaration' && stmt.declaration) {
+      // Unwrap ExportNamedDeclaration or ExportDefaultDeclaration if present
+      if ((stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration') && stmt.declaration) {
         stmt = stmt.declaration;
       }
 
@@ -176,6 +176,9 @@ export class RustEmitter {
       case 'ExportNamedDeclaration':
         return this.emit(node.declaration);
 
+      case 'ExportDefaultDeclaration':
+        return this.emitExportDefaultDeclaration(node);
+
       case 'ImportDeclaration':
         return this.emitImportDeclaration(node);
 
@@ -262,10 +265,26 @@ export class RustEmitter {
       case 'FunctionExpression':
         return this.emitClosure(node);
 
+      case 'AwaitExpression':
+        return `${this.emit(node.argument)}.await`;
+
       default:
         console.warn(`[js-to-rust] Unsupported AST node: ${node.type}`);
         return `/* Unsupported: ${node.type} */`;
     }
+  }
+
+  emitExportDefaultDeclaration(node) {
+    if (node.declaration.type === 'FunctionDeclaration') {
+      if (!node.declaration.id) {
+        node.declaration.id = { type: 'Identifier', name: 'default_export' };
+      }
+      return this.emitFunctionDeclaration(node.declaration);
+    }
+    if (node.declaration.type === 'Identifier') {
+      return '';
+    }
+    return `pub static DEFAULT_EXPORT: &str = ${this.emit(node.declaration)};`;
   }
 
   emitClosure(node, isMove = true) {
@@ -332,9 +351,10 @@ export class RustEmitter {
   }
 
   emitFunctionDeclaration(node) {
-    const fnName = node.id.name;
+    const fnName = node.id ? node.id.name : 'default_export';
     const jsdoc = parseJSDoc(node.leadingComments);
     const isMain = fnName === 'main';
+    const isAsync = Boolean(node.async);
 
     const paramInfos = this.signatures.get(fnName) || [];
     const params = paramInfos.map((p) => `${p.name}: ${p.type}`).join(', ');
@@ -348,8 +368,14 @@ export class RustEmitter {
       returnClause = ` -> ${this.defaultNumberType}`;
     }
 
+    let tokioAttribute = '';
+    if (isMain && isAsync) {
+      tokioAttribute = `#[tokio::main]\n${this.indent()}`;
+    }
+
     const visibility = isMain ? '' : 'pub ';
-    const header = `${this.indent()}${visibility}fn ${fnName}(${params})${returnClause} `;
+    const asyncPrefix = isAsync ? 'async ' : '';
+    const header = `${this.indent()}${tokioAttribute}${visibility}${asyncPrefix}fn ${fnName}(${params})${returnClause} `;
     const body = this.emit(node.body);
 
     return header + body;

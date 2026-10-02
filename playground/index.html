@@ -726,7 +726,11 @@
           <option value="concurrency_mpsc">📡 2. 通道訊息傳遞 (mpsc::channel)</option>
           <option value="concurrency_mutex">🔒 3. 共享狀態互斥鎖 (Arc&lt;Mutex&gt;)</option>
         </optgroup>
-        <optgroup label="📦 架構與型別推導">
+        <optgroup label="⚡ 非同步與模組 (Async & Export Default)">
+          <option value="async_await">⚡ 4. 非同步函數 (async / await & tokio)</option>
+          <option value="export_default">📦 5. 預設導出 (export default & import)</option>
+        </optgroup>
+        <optgroup label="📂 專案架構與型別推導">
           <option value="nested">📂 巢狀資料夾架構 (src/utils/math.js)</option>
           <option value="modules">📦 基本模組架構 (src/math.js)</option>
           <option value="inference">🧠 免註解型別推導 (Type Inference)</option>
@@ -932,6 +936,53 @@ function main() {
   }
 
   console.log("【最終計數結果】:", counter.lock().val);
+}`
+        }
+      },
+
+      async_await: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// ⚡ 非同步運算：async / await 配合 Rust tokio 執行時期
+async function fetchRemoteData() {
+  console.log("【非同步背景】正在非同步獲取資料...");
+  return 100;
+}
+
+async function calculateBonus(base) {
+  return base * 2;
+}
+
+// 主程式宣告為 async，自動生成 #[tokio::main] 進入點
+async function main() {
+  console.log("=== 主程式非同步啟動 ===");
+
+  const rawData = await fetchRemoteData();
+  console.log("收到原始資料:", rawData);
+
+  const bonus = await calculateBonus(rawData);
+  console.log("計算後總分:", bonus);
+
+  console.log("=== 非同步任務順利完成 ===");
+}`
+        }
+      },
+
+      export_default: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 📦 預設導出與預設匯入 (export default & import)
+import calculator from './calculator.js';
+
+function main() {
+  const result = calculator(25, 75);
+  console.log("從 calculator 模組計算 25 + 75 =", result);
+}`,
+          'src/calculator.js': `/**
+ * 預設導出函數 (export default)
+ */
+export default function calculator(a, b) {
+  return a + b;
 }`
         }
       },

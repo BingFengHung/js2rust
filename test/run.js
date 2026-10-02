@@ -129,6 +129,42 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('*counter.lock().unwrap()'), 'Dereferences locked counter');
 }
 
+// Test 7: export default
+{
+  const js = `
+  export default function add(a, b) {
+    return a + b;
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub fn add(a: i64, b: i64) -> i64'), 'Translates export default function to pub fn');
+}
+
+// Test 8: async / await with #[tokio::main]
+{
+  const js = `
+  async function fetchData() {
+    return 100;
+  }
+
+  async function main() {
+    const data = await fetchData();
+    console.log("Data:", data);
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub async fn fetchData() -> i64'), 'Translates async function to pub async fn');
+  assert(rust.includes('#[tokio::main]'), 'Annotates async main with #[tokio::main]');
+  assert(rust.includes('async fn main()'), 'Emits async fn main()');
+  assert(rust.includes('fetchData().await;'), 'Translates await fetchData() to fetchData().await');
+
+  const files = {
+    'src/main.js': js
+  };
+  const project = generateRustProject(files);
+  assert(project['Cargo.toml'].includes('tokio = { version = "1", features = ["full"] }'), 'Includes tokio in Cargo.toml dependencies');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);
