@@ -472,7 +472,7 @@ export class RustEmitter {
     const item = node.left.declarations ? node.left.declarations[0].id.name : node.left.name;
     const list = this.emit(node.right);
     const body = this.emit(node.body);
-    return `${this.indent()}for &${item} in ${list}.iter() ${body}`;
+    return `${this.indent()}for ${item} in ${list} ${body}`;
   }
 
   emitBinaryExpression(node) {
@@ -630,6 +630,11 @@ export class RustEmitter {
     // Array / String .length -> (obj.len() as i64)
     if (!node.computed && node.property.name === 'length') {
       return `(${obj}.len() as i64)`;
+    }
+
+    // Smart pointer / Mutex dereferencing: .val / .value -> *obj
+    if (!node.computed && (node.property.name === 'val' || node.property.name === 'value')) {
+      return `*${obj}`;
     }
 
     // Index access: arr[i] -> arr[i as usize]

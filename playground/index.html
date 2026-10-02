@@ -721,12 +721,18 @@
       <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">範本：</label>
       <select id="templateSelect">
         <option value="" disabled selected>📂 載入範本專案...</option>
-        <option value="concurrency">🧵 無所畏懼的併發 (Fearless Concurrency)</option>
-        <option value="nested">📂 巢狀資料夾架構 (src/utils/math.js)</option>
-        <option value="modules">📦 基本模組架構 (src/math.js)</option>
-        <option value="inference">🧠 免註解型別推導 (Type Inference)</option>
-        <option value="advanced">🔥 結構體與可變借用 (Struct & &mut)</option>
-        <option value="custom">自訂空白專案 (Empty)</option>
+        <optgroup label="🧵 無所畏懼的併發 (Fearless Concurrency)">
+          <option value="concurrency_threads">🧵 1. 多執行緒派生 (thread::spawn + join)</option>
+          <option value="concurrency_mpsc">📡 2. 通道訊息傳遞 (mpsc::channel)</option>
+          <option value="concurrency_mutex">🔒 3. 共享狀態互斥鎖 (Arc&lt;Mutex&gt;)</option>
+        </optgroup>
+        <optgroup label="📦 架構與型別推導">
+          <option value="nested">📂 巢狀資料夾架構 (src/utils/math.js)</option>
+          <option value="modules">📦 基本模組架構 (src/math.js)</option>
+          <option value="inference">🧠 免註解型別推導 (Type Inference)</option>
+          <option value="advanced">🔥 結構體與可變借用 (Struct & &mut)</option>
+          <option value="custom">自訂空白專案 (Empty)</option>
+        </optgroup>
       </select>
 
       <button id="importBtn" class="btn btn-secondary" title="匯入本機專案資料夾或備份檔">📂 匯入專案</button>
@@ -844,31 +850,88 @@
   <script>
     // Templates for different scenarios
     const TEMPLATES = {
-      concurrency: {
+      concurrency_threads: {
         folders: ['src'],
         files: {
-          'src/main.js': `// 🧵 Rust 無所畏懼的併發 (Fearless Concurrency)
-// 包含多執行緒派生 (thread.spawn) 與 MPSC 通道傳訊 (Message Passing)
+          'src/main.js': `// 🧵 模式一：多執行緒派生與等待 (thread::spawn + join)
 function main() {
-  console.log("=== 主執行緒開始執行 ===");
+  console.log("【主執行緒】準備啟動子執行緒...");
 
-  // 1. 建立 MPSC (Multi-Producer, Single-Consumer) 通道
-  const [tx, rx] = mpsc.channel();
-
-  // 2. 建立子執行緒進行背景平行運算
-  const worker = thread.spawn(() => {
-    console.log("【子執行緒】背景平行運算中...");
-    const answer = 42;
-    tx.send(answer);
+  // 派生背景子執行緒 (thread.spawn)
+  const handle = thread.spawn(() => {
+    for (let i = 1; i <= 3; i++) {
+      console.log("【子執行緒】平行運算進度:", i);
+      thread.sleep(100);
+    }
   });
 
-  // 3. 主執行緒同步接收訊息
-  const received = rx.recv();
-  console.log("【主執行緒】收到來自子執行緒的運算成果:", received);
+  for (let i = 1; i <= 2; i++) {
+    console.log("【主執行緒】同步執行工作:", i);
+  }
 
-  // 4. 等待子執行緒安全結束
+  // 等待子執行緒執行完成 (join)
+  handle.join();
+  console.log("【主執行緒】所有執行緒皆已順利完成！");
+}`
+        }
+      },
+
+      concurrency_mpsc: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 📡 模式二：通道訊息傳遞 (mpsc::channel)
+// 哲學：不要透過共享記憶體來溝通，而是透過溝通來共享記憶體
+function main() {
+  console.log("=== 建立 MPSC 通道 ===");
+  const [tx, rx] = mpsc.channel();
+
+  // 建立子執行緒進行背景計算
+  const worker = thread.spawn(() => {
+    console.log("【子執行緒】正在計算關鍵數據...");
+    const secret = 42 * 2;
+    // 發送計算結果至通道
+    tx.send(secret);
+  });
+
+  // 主執行緒阻塞等待接收數據
+  const result = rx.recv();
+  console.log("【主執行緒】成功從通道接收到數值:", result);
+
   worker.join();
-  console.log("=== 所有執行緒安全執行完畢！ ===");
+  console.log("=== 通道通訊與多執行緒任務圓滿完成 ===");
+}`
+        }
+      },
+
+      concurrency_mutex: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🔒 模式三：共享狀態併發 (Arc<Mutex<T>>)
+// Arc (原子引用計數) + Mutex (互斥鎖)：確保跨執行緒安全修改同一資料
+function main() {
+  // 建立被 Mutex 保護的計數器，並用 Arc 包裝以跨執行緒共享
+  const counter = Arc.new(Mutex.new(0));
+  let handles = [];
+
+  console.log("=== 啟動 5 個執行緒競爭修改共享計數器 ===");
+
+  for (let i = 0; i < 5; i++) {
+    const counter_clone = Arc.clone(counter);
+    const handle = thread.spawn(() => {
+      // 取得互斥鎖 (lock)，離開區塊自動釋放鎖
+      let num = counter_clone.lock();
+      num.val += 1;
+      console.log("執行緒累加成功！");
+    });
+    handles.push(handle);
+  }
+
+  // 等待全部 5 個執行緒執行完成
+  for (const h of handles) {
+    h.join();
+  }
+
+  console.log("【最終計數結果】:", counter.lock().val);
 }`
         }
       },

@@ -100,6 +100,35 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('handle.join().unwrap();'), 'Joins thread handle with unwrap');
 }
 
+// Test 6: Shared-State Concurrency with Arc & Mutex
+{
+  const js = `
+  function main() {
+    const counter = Arc.new(Mutex.new(0));
+    let handles = [];
+    for (let i = 0; i < 3; i++) {
+      const c = Arc.clone(counter);
+      const handle = thread.spawn(() => {
+        let num = c.lock();
+        num.val += 1;
+      });
+      handles.push(handle);
+    }
+    for (const h of handles) {
+      h.join();
+    }
+    console.log("Count:", counter.lock().val);
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('use std::sync::{Arc, Mutex};'), 'Imports Arc and Mutex');
+  assert(rust.includes('Arc::new(Mutex::new(0));'), 'Creates Arc::new(Mutex::new(0))');
+  assert(rust.includes('Arc::clone(&counter);'), 'Clones Arc with Arc::clone(&counter)');
+  assert(rust.includes('c.lock().unwrap();'), 'Locks mutex with .lock().unwrap()');
+  assert(rust.includes('*num += 1;'), 'Dereferences and mutates with *num += 1');
+  assert(rust.includes('*counter.lock().unwrap()'), 'Dereferences locked counter');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);
