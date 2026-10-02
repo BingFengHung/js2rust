@@ -264,6 +264,37 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes("pub fn longest<'a>(x: &'a str, y: &'a str) -> &'a str"), "Emits pub fn longest<'a> with lifetime parameter");
 }
 
+// Test 13: Traits and Interface Polymorphism (interface Summary + class implements Summary)
+{
+  const js = `
+  interface Summary {
+    summarize(): string;
+  }
+
+  class Article implements Summary {
+    constructor(title, author) {
+      this.title = title;
+      this.author = author;
+    }
+
+    summarize() {
+      return \`\${this.title} by \${this.author}\`;
+    }
+  }
+
+  function main() {
+    const article = new Article("Rust Guide", "Ferris");
+    console.log(article.summarize());
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub trait Summary {'), 'Emits pub trait Summary');
+  assert(rust.includes('fn summarize(&self) -> String;'), 'Declares fn summarize in trait');
+  assert(rust.includes('impl Summary for Article {'), 'Emits impl Summary for Article');
+  assert(rust.includes('fn summarize(&self) -> String {'), 'Implements fn summarize for Article');
+  assert(rust.includes('article.summarize()'), 'Calls article.summarize()');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);

@@ -720,23 +720,36 @@
     <div class="actions">
       <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">範本：</label>
       <select id="templateSelect">
-        <option value="" disabled selected>📂 載入範本專案...</option>
-        <optgroup label="🧵 無所畏懼的併發 (Fearless Concurrency)">
-          <option value="concurrency_threads">🧵 1. 多執行緒派生 (thread::spawn + join)</option>
-          <option value="concurrency_mpsc">📡 2. 通道訊息傳遞 (mpsc::channel)</option>
-          <option value="concurrency_mutex">🔒 3. 共享狀態互斥鎖 (Arc&lt;Mutex&gt;)</option>
+        <option value="" disabled selected>📂 載入開發維度範本專案...</option>
+
+        <optgroup label="🧮 1. 基礎語言與演算法 (Core Language)">
+          <option value="dim_basic">1-1. 基礎運算與控制流 (If/Else, While, Loop, Primitives)</option>
+          <option value="dim_vectors">1-2. 向量與動態陣列 (Vec, push, pop, slice, index)</option>
+          <option value="dim_inference">1-3. 免註解型別推導 (Type Inference & &mut 借用)</option>
+          <option value="dim_advanced_struct">1-4. JSDoc 結構體定義 (@typedef & property)</option>
         </optgroup>
-        <optgroup label="⚡ 非同步與模組 (Async & Export Default)">
-          <option value="async_await">⚡ 4. 非同步函數 (async / await & tokio)</option>
-          <option value="export_default">📦 5. 預設導出 (export default & import)</option>
-          <option value="oop_classes">🏛️ 6. 類別與方法 (ES6 class -> struct + impl)</option>
-          <option value="advanced_systems">🛡️ 7. 系統級語法 (Enum, Lifetime, Unsafe)</option>
+
+        <optgroup label="📦 2. 模組工程與物件導向 (Modules & OOP)">
+          <option value="dim_modules">2-1. 巢狀資料夾與模組工程 (src/utils/math.js & Cargo.toml)</option>
+          <option value="dim_oop">2-2. 物件導向與方法封裝 (ES6 class -> struct + impl)</option>
+          <option value="dim_export_default">2-3. 預設導出與外部模組 (export default & import)</option>
         </optgroup>
-        <optgroup label="📂 專案架構與型別推導">
-          <option value="nested">📂 巢狀資料夾架構 (src/utils/math.js)</option>
-          <option value="modules">📦 基本模組架構 (src/math.js)</option>
-          <option value="inference">🧠 免註解型別推導 (Type Inference)</option>
-          <option value="advanced">🔥 結構體與可變借用 (Struct & &mut)</option>
+
+        <optgroup label="🧵 3. 併發與非同步程式設計 (Concurrency & Async)">
+          <option value="dim_threads">3-1. 多執行緒派生 (thread::spawn + join + sleep)</option>
+          <option value="dim_mpsc">3-2. 通道訊息傳遞 (mpsc::channel send/recv)</option>
+          <option value="dim_mutex">3-3. 共享狀態互斥鎖 (Arc&lt;Mutex&gt; lock & mutate)</option>
+          <option value="dim_async">3-4. 非同步函數與 Tokio (async / await & #[tokio::main])</option>
+        </optgroup>
+
+        <optgroup label="🛡️ 4. 系統底層與進階特性 (Systems & Advanced)">
+          <option value="dim_enums">4-1. 列舉型別與樣式比對 (enum & switch/match)</option>
+          <option value="dim_lifetimes">4-2. 顯式生命週期標註 (@lifetime 'a & 借用檢查)</option>
+          <option value="dim_unsafe">4-3. 系統底層不安全區塊 (unsafe(() => ...))</option>
+          <option value="dim_traits">4-4. 特徵介面與多型 (interface & class implements)</option>
+        </optgroup>
+
+        <optgroup label="📝 其他">
           <option value="custom">自訂空白專案 (Empty)</option>
         </optgroup>
       </select>
@@ -856,220 +869,113 @@
   <script>
     // Templates for different scenarios
     const TEMPLATES = {
-      concurrency_threads: {
+      // 🧮 1. 基礎語言與演算法 (Core Language)
+      dim_basic: {
         folders: ['src'],
         files: {
-          'src/main.js': `// 🧵 模式一：多執行緒派生與等待 (thread::spawn + join)
-function main() {
-  console.log("【主執行緒】準備啟動子執行緒...");
-
-  // 派生背景子執行緒 (thread.spawn)
-  const handle = thread.spawn(() => {
-    for (let i = 1; i <= 3; i++) {
-      console.log("【子執行緒】平行運算進度:", i);
-      thread.sleep(100);
-    }
-  });
-
-  for (let i = 1; i <= 2; i++) {
-    console.log("【主執行緒】同步執行工作:", i);
-  }
-
-  // 等待子執行緒執行完成 (join)
-  handle.join();
-  console.log("【主執行緒】所有執行緒皆已順利完成！");
-}`
-        }
-      },
-
-      concurrency_mpsc: {
-        folders: ['src'],
-        files: {
-          'src/main.js': `// 📡 模式二：通道訊息傳遞 (mpsc::channel)
-// 哲學：不要透過共享記憶體來溝通，而是透過溝通來共享記憶體
-function main() {
-  console.log("=== 建立 MPSC 通道 ===");
-  const [tx, rx] = mpsc.channel();
-
-  // 建立子執行緒進行背景計算
-  const worker = thread.spawn(() => {
-    console.log("【子執行緒】正在計算關鍵數據...");
-    const secret = 42 * 2;
-    // 發送計算結果至通道
-    tx.send(secret);
-  });
-
-  // 主執行緒阻塞等待接收數據
-  const result = rx.recv();
-  console.log("【主執行緒】成功從通道接收到數值:", result);
-
-  worker.join();
-  console.log("=== 通道通訊與多執行緒任務圓滿完成 ===");
-}`
-        }
-      },
-
-      concurrency_mutex: {
-        folders: ['src'],
-        files: {
-          'src/main.js': `// 🔒 模式三：共享狀態併發 (Arc<Mutex<T>>)
-// Arc (原子引用計數) + Mutex (互斥鎖)：確保跨執行緒安全修改同一資料
-function main() {
-  // 建立被 Mutex 保護的計數器，並用 Arc 包裝以跨執行緒共享
-  const counter = Arc.new(Mutex.new(0));
-  let handles = [];
-
-  console.log("=== 啟動 5 個執行緒競爭修改共享計數器 ===");
-
-  for (let i = 0; i < 5; i++) {
-    const counter_clone = Arc.clone(counter);
-    const handle = thread.spawn(() => {
-      // 取得互斥鎖 (lock)，離開區塊自動釋放鎖
-      let num = counter_clone.lock();
-      num.val += 1;
-      console.log("執行緒累加成功！");
-    });
-    handles.push(handle);
-  }
-
-  // 等待全部 5 個執行緒執行完成
-  for (const h of handles) {
-    h.join();
-  }
-
-  console.log("【最終計數結果】:", counter.lock().val);
-}`
-        }
-      },
-
-      async_await: {
-        folders: ['src'],
-        files: {
-          'src/main.js': `// ⚡ 非同步運算：async / await 配合 Rust tokio 執行時期
-async function fetchRemoteData() {
-  console.log("【非同步背景】正在非同步獲取資料...");
-  return 100;
-}
-
-async function calculateBonus(base) {
-  return base * 2;
-}
-
-// 主程式宣告為 async，自動生成 #[tokio::main] 進入點
-async function main() {
-  console.log("=== 主程式非同步啟動 ===");
-
-  const rawData = await fetchRemoteData();
-  console.log("收到原始資料:", rawData);
-
-  const bonus = await calculateBonus(rawData);
-  console.log("計算後總分:", bonus);
-
-  console.log("=== 非同步任務順利完成 ===");
-}`
-        }
-      },
-
-      export_default: {
-        folders: ['src'],
-        files: {
-          'src/main.js': `// 📦 預設導出與預設匯入 (export default & import)
-import calculator from './calculator.js';
-
-function main() {
-  const result = calculator(25, 75);
-  console.log("從 calculator 模組計算 25 + 75 =", result);
-}`,
-          'src/calculator.js': `/**
- * 預設導出函數 (export default)
- */
-export default function calculator(a, b) {
-  return a + b;
-}`
-        }
-      },
-
-      oop_classes: {
-        folders: ['src'],
-        files: {
-          'src/main.js': `// 🏛️ 物件導向：ES6 class 自動轉換為 Rust struct + impl
-class BankAccount {
-  constructor(owner, balance) {
-    this.owner = owner;
-    this.balance = balance;
-  }
-
-  // 靜態分析會自動將修改自身屬性的方法轉換為 (&mut self)
-  deposit(amount) {
-    this.balance += amount;
-  }
-
-  // 僅讀取屬性的方法轉換為 (&self)
-  getBalance() {
-    return this.balance;
+          'src/main.js': `// 🧮 1-1. 基礎運算與控制流 (If/Else, While, Loop, Primitives)
+function calculateTax(income) {
+  if (income > 100000) {
+    return income * 0.3;
+  } else if (income > 50000) {
+    return income * 0.2;
+  } else {
+    return income * 0.1;
   }
 }
 
 function main() {
-  const acc = new BankAccount("Alice", 100);
-  acc.deposit(50);
-  console.log("Account Owner:", acc.owner);
-  console.log("Updated Balance:", acc.getBalance());
+  console.log("=== 基礎控制流與迴圈 ===");
+  let sum = 0;
+  for (let i = 1; i <= 5; i++) {
+    sum += i;
+  }
+  console.log("1 到 5 累加總和:", sum);
+
+  const tax = calculateTax(75000);
+  console.log("75,000 所得稅額:", tax);
 }`
         }
       },
 
-      advanced_systems: {
+      dim_vectors: {
         folders: ['src'],
         files: {
-          'src/main.js': `// 🛡️ 系統級與底層語法轉換範例
-// 1. 列舉型別 (Enum)
-enum Direction {
-  North,
-  South,
-  East,
-  West
+          'src/main.js': `// 🧮 1-2. 向量與動態陣列 (Vec, push, pop, slice, index)
+function main() {
+  console.log("=== Rust Vec<T> 動態陣列操作 ===");
+  const numbers = [10, 20, 30];
+
+  // 動態添加元素
+  numbers.push(40);
+  numbers.push(50);
+  console.log("添加元素後陣列長度:", numbers.length);
+
+  // 彈出末端元素
+  const popped = numbers.pop();
+  console.log("彈出最後元素:", popped);
+
+  // 檢查元素是否存在 (contains)
+  const hasTwenty = numbers.includes(20);
+  console.log("陣列是否包含 20:", hasTwenty);
+
+  // 索引取值
+  console.log("第一個元素:", numbers[0]);
+}`
+        }
+      },
+
+      dim_inference: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🧮 1-3. 免註解型別推導 (Type Inference & &mut 借用)
+// 💡 編譯器會自動分析函數呼叫處傳入的參數，並依據函數內部的修改行為推導 &mut
+function appendItem(list, item) {
+  list.push(item);
 }
 
-// 2. 顯式生命週期標註 (@lifetime 'a)
+function greetUser(name) {
+  console.log("您好，歡迎:", name);
+}
+
+function main() {
+  const nums = [1, 2, 3];
+  // 呼叫處傳入 nums，編譯器自動推導 list: &mut [i64]
+  appendItem(nums, 4);
+
+  greetUser("Ferris (Rust 吉祥物)");
+  console.log("修改後的陣列長度:", nums.length);
+}`
+        }
+      },
+
+      dim_advanced_struct: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🧮 1-4. JSDoc 結構體定義 (@typedef & property)
 /**
- * @lifetime 'a
- * @param {&'a str} x
- * @param {&'a str} y
- * @returns {&'a str}
+ * @typedef {Object} Point
+ * @property {float} x
+ * @property {float} y
  */
-function longest(x, y) {
-  if (x.length > y.length) {
-    return x;
-  }
-  return y;
+
+function distanceFromOrigin(p) {
+  return Math.sqrt(p.x * p.x + p.y * p.y);
 }
 
 function main() {
-  const dir = Direction.North;
-  switch (dir) {
-    case Direction.North:
-      console.log("Heading North!");
-      break;
-    default:
-      console.log("Other direction");
-  }
-
-  const s = longest("short", "longer_string");
-  console.log("Longest string:", s);
-
-  // 3. 不安全區塊 (unsafe block)
-  unsafe(() => {
-    console.log("Inside unsafe block!");
-  });
+  const pt = { x: 3.0, y: 4.0 };
+  console.log("座標點點距原點距離:", distanceFromOrigin(pt));
 }`
         }
       },
 
-      nested: {
+      // 📦 2. 模組工程與物件導向 (Modules & OOP)
+      dim_modules: {
         folders: ['src', 'src/utils'],
         files: {
-          'src/main.js': `// 從巢狀資料夾 src/utils/math.js 引入模組
+          'src/main.js': `// 📦 2-1. 巢狀資料夾與模組工程 (src/utils/math.js & Cargo.toml)
+// 編譯器會自動生成包含樹狀 mod.rs、main.rs 與 Cargo.toml 的完整 Rust 專案
 import { add, multiply } from './utils/math.js';
 
 function main() {
@@ -1092,55 +998,265 @@ export function multiply(a, b) {
         }
       },
 
-      modules: {
+      dim_oop: {
         folders: ['src'],
         files: {
-          'src/main.js': `import { add, multiply } from './math.js';
+          'src/main.js': `// 📦 2-2. 物件導向與方法封裝 (ES6 class -> struct + impl)
+class BankAccount {
+  constructor(owner, balance) {
+    this.owner = owner;
+    this.balance = balance;
+  }
+
+  // 靜態分析偵測到修改 this 屬性 -> 自動標記為 (&mut self)
+  deposit(amount) {
+    this.balance += amount;
+  }
+
+  // 靜態分析偵測到僅讀取 this 屬性 -> 自動標記為 (&self)
+  getBalance() {
+    return this.balance;
+  }
+}
 
 function main() {
-  const sum = add(15, 25);
-  console.log("15 + 25 =", sum);
+  const acc = new BankAccount("Alice", 100);
+  acc.deposit(50);
+  console.log("帳戶擁有者:", acc.owner);
+  console.log("存入 50 後餘額:", acc.getBalance());
+}`
+        }
+      },
+
+      dim_export_default: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 📦 2-3. 預設導出與外部模組 (export default & import)
+import calculator from './calculator.js';
+
+function main() {
+  const result = calculator(25, 75);
+  console.log("從 calculator 模組計算 25 + 75 =", result);
 }`,
-          'src/math.js': `export function add(a, b) {
-  return a + b;
-}
-
-export function multiply(a, b) {
-  return a * b;
-}`
-        }
-      },
-
-      inference: {
-        folders: ['src'],
-        files: {
-          'src/main.js': `// 💡 免註解型別推導：自動依呼叫點參數推導型別
-function ask(greet) {
-  console.log("Greeting:", greet);
-}
-
-function main() {
-  ask("Hello from Type Inference!");
-}`
-        }
-      },
-
-      advanced: {
-        folders: ['src'],
-        files: {
-          'src/main.js': `/**
- * @typedef {Object} Point
- * @property {float} x
- * @property {float} y
+          'src/calculator.js': `/**
+ * 預設導出函數 (export default)
  */
+export default function calculator(a, b) {
+  return a + b;
+}`
+        }
+      },
 
-function distanceFromOrigin(p) {
-  return Math.sqrt(p.x * p.x + p.y * p.y);
+      // 🧵 3. 併發與非同步程式設計 (Concurrency & Async)
+      dim_threads: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🧵 3-1. 多執行緒派生 (thread::spawn + join + sleep)
+function main() {
+  console.log("【主執行緒】準備啟動背景計算子執行緒...");
+
+  // 派生背景子執行緒 (thread.spawn)
+  const handle = thread.spawn(() => {
+    for (let i = 1; i <= 3; i++) {
+      console.log("【子執行緒】平行運算進度:", i);
+      thread.sleep(100);
+    }
+  });
+
+  for (let i = 1; i <= 2; i++) {
+    console.log("【主執行緒】同步執行主要任務:", i);
+  }
+
+  // 等待子執行緒執行完成 (join)
+  handle.join();
+  console.log("【主執行緒】所有平行運算皆已完成！");
+}`
+        }
+      },
+
+      dim_mpsc: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🧵 3-2. 通道訊息傳遞 (mpsc::channel send/recv)
+// Rust 哲學：不要透過共享記憶體來溝通，而是透過溝通來共享記憶體
+function main() {
+  console.log("=== 建立 MPSC 通道 ===");
+  const [tx, rx] = mpsc.channel();
+
+  const worker = thread.spawn(() => {
+    console.log("【子執行緒】正在計算關鍵數據...");
+    const secret = 42 * 2;
+    // 發送計算結果至通道
+    tx.send(secret);
+  });
+
+  // 主執行緒阻塞等待接收數據
+  const result = rx.recv();
+  console.log("【主執行緒】成功從通道接收到數值:", result);
+
+  worker.join();
+  console.log("=== 通道通訊圓滿完成 ===");
+}`
+        }
+      },
+
+      dim_mutex: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🧵 3-3. 共享狀態互斥鎖 (Arc<Mutex> lock & mutate)
+// Arc (原子引用計數) + Mutex (互斥鎖)：保證多執行緒安全修改同一筆狀態
+function main() {
+  const counter = Arc.new(Mutex.new(0));
+  let handles = [];
+
+  console.log("=== 啟動 5 個執行緒競爭修改共享計數器 ===");
+
+  for (let i = 0; i < 5; i++) {
+    const counter_clone = Arc.clone(counter);
+    const handle = thread.spawn(() => {
+      // 取得互斥鎖 (lock)，離開區塊自動釋放鎖
+      let num = counter_clone.lock();
+      num.val += 1;
+      console.log("執行緒累加成功！");
+    });
+    handles.push(handle);
+  }
+
+  for (const h of handles) {
+    h.join();
+  }
+
+  console.log("【最終計數結果】:", counter.lock().val);
+}`
+        }
+      },
+
+      dim_async: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🧵 3-4. 非同步函數與 Tokio (async / await & #[tokio::main])
+async function fetchRemoteData() {
+  console.log("【非同步背景】正在非同步獲取資料...");
+  return 100;
+}
+
+async function calculateBonus(base) {
+  return base * 2;
+}
+
+// 主程式宣告為 async，自動生成 #[tokio::main] 進入點與 Cargo.toml 依賴
+async function main() {
+  console.log("=== 主程式非同步啟動 ===");
+
+  const rawData = await fetchRemoteData();
+  console.log("收到原始資料:", rawData);
+
+  const bonus = await calculateBonus(rawData);
+  console.log("計算後總分:", bonus);
+
+  console.log("=== 非同步任務順利完成 ===");
+}`
+        }
+      },
+
+      // 🛡️ 4. 系統底層與進階特性 (Systems & Advanced)
+      dim_enums: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🛡️ 4-1. 列舉型別與樣式比對 (enum & switch/match)
+enum Direction {
+  North,
+  South,
+  East,
+  West
 }
 
 function main() {
-  const pt = { x: 3.0, y: 4.0 };
-  console.log("Distance =", distanceFromOrigin(pt));
+  const dir = Direction.North;
+  // switch 在 Rust 中會自動轉換為窮舉樣式比對 (match)
+  switch (dir) {
+    case Direction.North:
+      console.log("朝向北方前進 (Heading North!)");
+      break;
+    case Direction.South:
+      console.log("朝向南方前進 (Heading South!)");
+      break;
+    default:
+      console.log("朝向其他方位");
+  }
+}`
+        }
+      },
+
+      dim_lifetimes: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🛡️ 4-2. 顯式生命週期標註 (@lifetime 'a & 借用檢查)
+// 透過 JSDoc @lifetime 標註，自動為 Rust 生成生命週期泛型參數 <'a>
+/**
+ * @lifetime 'a
+ * @param {&'a str} x
+ * @param {&'a str} y
+ * @returns {&'a str}
+ */
+function longest(x, y) {
+  if (x.length > y.length) {
+    return x;
+  }
+  return y;
+}
+
+function main() {
+  const s1 = "short";
+  const s2 = "longer_string";
+  const result = longest(s1, s2);
+  console.log("最長字串為:", result);
+}`
+        }
+      },
+
+      dim_unsafe: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🛡️ 4-3. 系統底層不安全區塊 (unsafe(() => ...))
+// 透過 unsafe 閉包呼叫，轉換為 Rust 原生 unsafe { ... } 區塊
+function main() {
+  let secret = 999;
+  console.log("進入 unsafe 前數值:", secret);
+
+  unsafe(() => {
+    console.log("【Unsafe 區塊內部】執行底層直接記憶體存取/FFI 邏輯:", secret);
+  });
+
+  console.log("Unsafe 區塊執行完畢");
+}`
+        }
+      },
+
+      dim_traits: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 🛡️ 4-4. 特徵介面與多型 (interface & class implements)
+// interface 自動轉換為 Rust 的 pub trait
+interface Summary {
+  summarize(): string;
+}
+
+// class implements Summary 自動轉換為 impl Summary for Article
+class Article implements Summary {
+  constructor(title, author) {
+    this.title = title;
+    this.author = author;
+  }
+
+  summarize() {
+    return \`\${this.title} by \${this.author}\`;
+  }
+}
+
+function main() {
+  const article = new Article("Rust 系統程式設計", "Ferris");
+  console.log("文章摘要:", article.summarize());
 }`
         }
       },
@@ -1154,6 +1270,19 @@ function main() {
         }
       }
     };
+
+    // Backward compatibility aliases
+    TEMPLATES.concurrency_threads = TEMPLATES.dim_threads;
+    TEMPLATES.concurrency_mpsc = TEMPLATES.dim_mpsc;
+    TEMPLATES.concurrency_mutex = TEMPLATES.dim_mutex;
+    TEMPLATES.async_await = TEMPLATES.dim_async;
+    TEMPLATES.export_default = TEMPLATES.dim_export_default;
+    TEMPLATES.oop_classes = TEMPLATES.dim_oop;
+    TEMPLATES.advanced_systems = TEMPLATES.dim_enums;
+    TEMPLATES.nested = TEMPLATES.dim_modules;
+    TEMPLATES.modules = TEMPLATES.dim_modules;
+    TEMPLATES.inference = TEMPLATES.dim_inference;
+    TEMPLATES.advanced = TEMPLATES.dim_advanced_struct;
 
     // State Variables
     let currentTemplate = TEMPLATES.nested;

@@ -315,6 +315,9 @@ export class RustEmitter {
       case 'TSEnumDeclaration':
         return this.emitTSEnumDeclaration(node);
 
+      case 'TSInterfaceDeclaration':
+        return this.emitTSInterfaceDeclaration(node);
+
       case 'ImportDeclaration':
         return this.emitImportDeclaration(node);
 
@@ -596,7 +599,63 @@ export class RustEmitter {
 
     implCode = implCode.trimEnd() + `\n${this.indent()}}`;
 
+    // Handle implements clause: class Foo implements Bar
+    const implementedTraits = (node.implements || []).map((i) => i.expression.name);
+    for (const traitName of implementedTraits) {
+      implCode += `\n\n${this.indent()}impl ${traitName} for ${className} {\n`;
+      this.withIndent(() => {
+        for (const method of methods) {
+          const methodName = method.key.name;
+          const rustMethodName = this.formatIdentifier(methodName);
+          const methodJsdoc = parseJSDoc(method.leadingComments);
+          const isMutating = this.doesMethodMutateThis(method.body);
+          const selfParam = isMutating ? '&mut self' : '&self';
+
+          const methodParams = method.params.map((p) => {
+            const pName = p.name;
+            const pType = methodJsdoc.params[pName] ? mapToRustType(methodJsdoc.params[pName]) : this.defaultNumberType;
+            return `${pName}: ${pType}`;
+          });
+          const allParams = [selfParam, ...methodParams].join(', ');
+
+          let returnClause = '';
+          if (methodJsdoc.returns && methodJsdoc.returns !== 'void') {
+            returnClause = ` -> ${mapToRustType(methodJsdoc.returns, true)}`;
+          } else if (this.hasReturnWithVal(method.body)) {
+            returnClause = ` -> String`;
+          }
+
+          implCode += `${this.indent()}fn ${rustMethodName}(${allParams})${returnClause} `;
+          const bodyStr = this.emit(method.body);
+          implCode += `${bodyStr}\n\n`;
+        }
+      });
+      implCode = implCode.trimEnd() + `\n${this.indent()}}`;
+    }
+
     return structCode + implCode;
+  }
+
+  emitTSInterfaceDeclaration(node) {
+    const traitName = node.id.name;
+    let code = `${this.indent()}pub trait ${traitName} {\n`;
+    this.withIndent(() => {
+      for (const member of node.body.body) {
+        if (member.type === 'TSMethodSignature') {
+          const methodName = member.key.name;
+          let retClause = ' -> String';
+          if (member.typeAnnotation && member.typeAnnotation.typeAnnotation) {
+            const rawType = member.typeAnnotation.typeAnnotation.type;
+            if (rawType === 'TSNumberKeyword') retClause = ` -> ${this.defaultNumberType}`;
+            else if (rawType === 'TSBooleanKeyword') retClause = ' -> bool';
+            else if (rawType === 'TSVoidKeyword') retClause = '';
+          }
+          code += `${this.indent()}fn ${methodName}(&self)${retClause};\n`;
+        }
+      }
+    });
+    code += `${this.indent()}}\n`;
+    return code;
   }
 
   emitNewExpression(node) {
