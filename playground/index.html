@@ -131,7 +131,7 @@
     main {
       flex: 1;
       display: grid;
-      grid-template-columns: 240px 1fr 1fr;
+      grid-template-columns: 260px 1fr 1fr;
       overflow: hidden;
     }
 
@@ -146,7 +146,7 @@
 
     .sidebar-header {
       background-color: var(--bg-panel);
-      padding: 8px 14px;
+      padding: 8px 12px;
       font-size: 0.75rem;
       font-weight: 700;
       letter-spacing: 0.5px;
@@ -158,44 +158,77 @@
       height: 38px;
     }
 
-    .sidebar-btn-add {
-      background: rgba(88, 166, 255, 0.1);
-      border: 1px solid rgba(88, 166, 255, 0.3);
-      color: var(--accent-blue);
+    .sidebar-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sidebar-icon-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
       font-size: 0.72rem;
-      padding: 2px 8px;
+      padding: 2px 7px;
       border-radius: 4px;
       cursor: pointer;
       font-weight: 600;
+      transition: all 0.1s ease;
     }
 
-    .sidebar-btn-add:hover {
-      background: rgba(88, 166, 255, 0.2);
+    .sidebar-icon-btn:hover {
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+      background: rgba(88, 166, 255, 0.1);
     }
 
     .tree-container {
       flex: 1;
       overflow-y: auto;
-      padding: 8px 0;
+      padding: 6px 0;
     }
 
-    .tree-root {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 14px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      user-select: none;
-    }
-
-    .tree-file {
+    /* Tree Node Elements */
+    .tree-node-folder {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 6px 14px 6px 28px;
-      font-size: 0.83rem;
+      padding: 5px 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #8b949e;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.1s ease;
+    }
+
+    .tree-node-folder:hover {
+      background-color: var(--tree-hover);
+      color: var(--text-main);
+    }
+
+    .folder-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .folder-arrow {
+      font-size: 0.65rem;
+      width: 12px;
+      display: inline-block;
+      transition: transform 0.15s ease;
+    }
+
+    .tree-node-file {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 12px;
+      font-size: 0.82rem;
       color: #c9d1d9;
       cursor: pointer;
       border-left: 3px solid transparent;
@@ -203,18 +236,18 @@
       transition: background 0.1s ease;
     }
 
-    .tree-file:hover {
+    .tree-node-file:hover {
       background-color: var(--tree-hover);
     }
 
-    .tree-file.active {
+    .tree-node-file.active {
       background-color: var(--tree-active);
       color: #fff;
       border-left-color: var(--accent-blue);
       font-weight: 600;
     }
 
-    .tree-file-name {
+    .file-left {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -226,26 +259,27 @@
     .file-icon-js {
       color: #f7df1e;
       font-weight: 700;
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       background: rgba(247, 223, 30, 0.12);
       padding: 1px 4px;
       border-radius: 3px;
     }
 
-    .btn-delete-file {
+    .btn-delete-node {
       opacity: 0;
       color: var(--text-muted);
       cursor: pointer;
       padding: 2px 4px;
       border-radius: 3px;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
     }
 
-    .tree-file:hover .btn-delete-file {
+    .tree-node-file:hover .btn-delete-node,
+    .tree-node-folder:hover .btn-delete-node {
       opacity: 0.7;
     }
 
-    .btn-delete-file:hover {
+    .btn-delete-node:hover {
       opacity: 1 !important;
       color: #f85149;
     }
@@ -400,16 +434,16 @@
     <div class="brand">
       <span class="crab">🦀</span>
       <span>js-to-rust Playground</span>
-      <span class="badge">v0.3.0 (Tree View)</span>
+      <span class="badge">v0.4.0 (Folder Tree)</span>
     </div>
 
     <div class="actions">
       <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">選擇專案範本：</label>
       <select id="templateSelect">
-        <option value="modules">📦 模組化樹狀專案 (main.js + math.js)</option>
+        <option value="nested">📂 巢狀資料夾架構 (src/utils/math.js)</option>
+        <option value="modules">📦 基本模組架構 (src/math.js)</option>
         <option value="inference">🧠 免註解型別推導 (Type Inference)</option>
         <option value="advanced">🔥 結構體與可變借用 (Struct & &mut)</option>
-        <option value="fibonacci">遞迴斐波那契數列 (Fibonacci)</option>
         <option value="custom">自訂空白專案 (Empty)</option>
       </select>
 
@@ -423,19 +457,17 @@
   </header>
 
   <main>
-    <!-- Left: File Tree Explorer Sidebar -->
+    <!-- Left: File & Folder Tree Explorer Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-header">
-        <span>專案檔案 (EXPLORER)</span>
-        <button id="addFileBtn" class="sidebar-btn-add" title="在 src 目錄下新增模組檔案">+ 新增檔案</button>
+        <span>專案目錄 (EXPLORER)</span>
+        <div class="sidebar-actions">
+          <button id="addFileBtn" class="sidebar-icon-btn" title="新增檔案">+ 檔案</button>
+          <button id="addFolderBtn" class="sidebar-icon-btn" title="新增資料夾">+ 資料夾</button>
+        </div>
       </div>
-      <div class="tree-container">
-        <div class="tree-root">
-          <span>📁 src</span>
-        </div>
-        <div id="fileTree">
-          <!-- Dynamically populated files -->
-        </div>
+      <div class="tree-container" id="treeView">
+        <!-- Dynamically rendered folder tree -->
       </div>
     </aside>
 
@@ -444,7 +476,7 @@
       <div class="panel-header">
         <div class="active-tab-title">
           <span class="file-icon-js">JS</span>
-          <span id="activeFileName">main.js</span>
+          <span id="activeFilePath">src/main.js</span>
         </div>
         <span style="font-size: 0.75rem; color: #58a6ff;">即時編譯 (Live)</span>
       </div>
@@ -482,18 +514,21 @@
   <script>
     // Templates for different scenarios
     const TEMPLATES = {
-      modules: {
-        'main.js': `import { add, multiply } from './math.js';
+      nested: {
+        folders: ['src', 'src/utils'],
+        files: {
+          'src/main.js': `// 從巢狀資料夾 src/utils/math.js 引入模組
+import { add, multiply } from './utils/math.js';
 
 function main() {
-  const sum = add(15, 25);
-  console.log("從 math 模組計算 15 + 25 =", sum);
+  const sum = add(30, 70);
+  console.log("從 utils/math 呼叫 30 + 70 =", sum);
 
-  const product = multiply(7, 8);
-  console.log("從 math 模組計算 7 * 8 =", product);
+  const product = multiply(6, 9);
+  console.log("從 utils/math 呼叫 6 * 9 =", product);
 }`,
-        'math.js': `/**
- * 數學計算模組
+          'src/utils/math.js': `/**
+ * 位於 src/utils 資料夾下的數學模組
  */
 export function add(a, b) {
   return a + b;
@@ -502,43 +537,46 @@ export function add(a, b) {
 export function multiply(a, b) {
   return a * b;
 }`
+        }
+      },
+
+      modules: {
+        folders: ['src'],
+        files: {
+          'src/main.js': `import { add, multiply } from './math.js';
+
+function main() {
+  const sum = add(15, 25);
+  console.log("15 + 25 =", sum);
+}`,
+          'src/math.js': `export function add(a, b) {
+  return a + b;
+}
+
+export function multiply(a, b) {
+  return a * b;
+}`
+        }
       },
 
       inference: {
-        'main.js': `// 💡 點擊左側檔案樹可查看不同檔案。完全不需要寫 JSDoc！
+        folders: ['src'],
+        files: {
+          'src/main.js': `// 💡 免註解型別推導：自動依呼叫點參數推導型別
 function ask(greet) {
   console.log("Greeting:", greet);
 }
 
-function calculateTax(price, rate) {
-  return price * rate;
-}
-
-function processScores(scores) {
-  let total = 0;
-  for (let i = 0; i < scores.length; i++) {
-    total += scores[i];
-  }
-  return total;
-}
-
 function main() {
-  // 自動推導 greet 為 &str
   ask("Hello from Type Inference!");
-
-  // 自動推導 price 和 rate 為數值
-  const tax = calculateTax(100.0, 0.05);
-  console.log("Tax =", tax);
-
-  // 自動推導 scores 為 &[i64] 並自動傳入借用 &
-  const myScores = [90, 85, 95];
-  const sum = processScores(myScores);
-  console.log("Total Score =", sum);
 }`
+        }
       },
 
       advanced: {
-        'main.js': `/**
+        folders: ['src'],
+        files: {
+          'src/main.js': `/**
  * @typedef {Object} Point
  * @property {float} x
  * @property {float} y
@@ -548,58 +586,36 @@ function distanceFromOrigin(p) {
   return Math.sqrt(p.x * p.x + p.y * p.y);
 }
 
-function resetFirst(arr) {
-  arr[0] = 0;
-}
-
-function getStatus(code) {
-  switch (code) {
-    case 200:
-      return "OK";
-    default:
-      return "ERROR";
-  }
-}
-
 function main() {
   const pt = { x: 3.0, y: 4.0 };
   console.log("Distance =", distanceFromOrigin(pt));
-
-  let numbers = [100, 200, 300];
-  resetFirst(numbers);
-  console.log("After resetFirst =", numbers);
-
-  console.log("Status 200 =", getStatus(200));
 }`
-      },
-
-      fibonacci: {
-        'main.js': `function fibonacci(n) {
-  if (n <= 1) return n;
-  return fibonacci(n - 1) + fibonacci(n - 2);
-}
-
-function main() {
-  console.log("Fibonacci(10) =", fibonacci(10));
-}`
+        }
       },
 
       custom: {
-        'main.js': `function main() {
+        folders: ['src'],
+        files: {
+          'src/main.js': `function main() {
   console.log("Hello, World!");
 }`
+        }
       }
     };
 
     // State
-    let files = JSON.parse(JSON.stringify(TEMPLATES.modules));
-    let activeFile = 'main.js';
+    let currentTemplate = TEMPLATES.nested;
+    let folders = new Set(currentTemplate.folders);
+    let files = JSON.parse(JSON.stringify(currentTemplate.files));
+    let collapsedFolders = new Set();
+    let activeFile = 'src/main.js';
     let currentRustCode = '';
     let debounceTimer = null;
 
-    const fileTree = document.getElementById('fileTree');
-    const activeFileName = document.getElementById('activeFileName');
+    const treeView = document.getElementById('treeView');
+    const activeFilePath = document.getElementById('activeFilePath');
     const addFileBtn = document.getElementById('addFileBtn');
+    const addFolderBtn = document.getElementById('addFolderBtn');
     const jsInput = document.getElementById('jsInput');
     const rustCode = document.getElementById('rustCode');
     const transpileStatus = document.getElementById('transpileStatus');
@@ -610,81 +626,224 @@ function main() {
     const execBadge = document.getElementById('execBadge');
     const terminalOutput = document.getElementById('terminalOutput');
 
-    function renderTree() {
-      fileTree.innerHTML = '';
-      const filenames = Object.keys(files);
+    /**
+     * Build nested tree data structure from folders and files
+     */
+    function buildTreeData() {
+      const root = { name: 'src', path: 'src', type: 'folder', children: {} };
 
-      filenames.forEach((filename) => {
-        const item = document.createElement('div');
-        item.className = `tree-file ${filename === activeFile ? 'active' : ''}`;
-
-        const nameContainer = document.createElement('div');
-        nameContainer.className = 'tree-file-name';
-        nameContainer.innerHTML = `<span class="file-icon-js">JS</span><span>${filename}</span>`;
-        item.appendChild(nameContainer);
-
-        // Delete button for non-main files
-        if (filename !== 'main.js') {
-          const deleteBtn = document.createElement('span');
-          deleteBtn.className = 'btn-delete-file';
-          deleteBtn.innerHTML = '🗑️';
-          deleteBtn.title = '刪除檔案';
-          deleteBtn.onclick = (e) => {
-            e.stopPropagation();
-            if (confirm(`確定要刪除 ${filename} 嗎？`)) {
-              delete files[filename];
-              if (activeFile === filename) {
-                activeFile = 'main.js';
-              }
-              renderTree();
-              activeFileName.textContent = activeFile;
-              jsInput.value = files[activeFile] || '';
-              doTranspile();
-            }
-          };
-          item.appendChild(deleteBtn);
+      // Ensure all folders exist in tree
+      folders.forEach((folderPath) => {
+        const parts = folderPath.split('/');
+        let curr = root;
+        let currPath = '';
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          currPath = currPath ? `${currPath}/${part}` : part;
+          if (currPath === 'src') continue;
+          if (!curr.children[part]) {
+            curr.children[part] = { name: part, path: currPath, type: 'folder', children: {} };
+          }
+          curr = curr.children[part];
         }
-
-        item.onclick = () => {
-          files[activeFile] = jsInput.value;
-          activeFile = filename;
-          renderTree();
-          activeFileName.textContent = activeFile;
-          jsInput.value = files[activeFile] || '';
-          doTranspile();
-        };
-
-        fileTree.appendChild(item);
       });
+
+      // Insert all files
+      Object.keys(files).forEach((filePath) => {
+        const parts = filePath.split('/');
+        let curr = root;
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          if (i === 0 && part === 'src') continue;
+          if (i === parts.length - 1) {
+            curr.children[part] = { name: part, path: filePath, type: 'file' };
+          } else {
+            if (!curr.children[part]) {
+              curr.children[part] = { name: part, path: parts.slice(0, i + 1).join('/'), type: 'folder', children: {} };
+            }
+            curr = curr.children[part];
+          }
+        }
+      });
+
+      return root;
     }
 
+    /**
+     * Render the folder tree visually
+     */
+    function renderTree() {
+      treeView.innerHTML = '';
+      const root = buildTreeData();
+
+      function renderNode(node, depth = 0) {
+        const indentPx = depth * 14;
+
+        if (node.type === 'folder') {
+          const isCollapsed = collapsedFolders.has(node.path);
+          const folderDiv = document.createElement('div');
+          folderDiv.className = 'tree-node-folder';
+          folderDiv.style.paddingLeft = `${12 + indentPx}px`;
+
+          const left = document.createElement('div');
+          left.className = 'folder-left';
+          left.innerHTML = `
+            <span class="folder-arrow">${isCollapsed ? '▶' : '▼'}</span>
+            <span>📁</span>
+            <span>${node.name}</span>
+          `;
+          folderDiv.appendChild(left);
+
+          // Allow deleting custom subfolders (not src)
+          if (node.path !== 'src') {
+            const delBtn = document.createElement('span');
+            delBtn.className = 'btn-delete-node';
+            delBtn.innerHTML = '🗑️';
+            delBtn.title = '刪除資料夾及其內容';
+            delBtn.onclick = (e) => {
+              e.stopPropagation();
+              if (confirm(`確定要刪除資料夾 ${node.path} 及其所有內容嗎？`)) {
+                // Delete files under folder
+                Object.keys(files).forEach((f) => {
+                  if (f.startsWith(node.path + '/')) delete files[f];
+                });
+                folders.delete(node.path);
+                if (activeFile.startsWith(node.path + '/')) {
+                  activeFile = 'src/main.js';
+                }
+                renderTree();
+                activeFilePath.textContent = activeFile;
+                jsInput.value = files[activeFile] || '';
+                doTranspile();
+              }
+            };
+            folderDiv.appendChild(delBtn);
+          }
+
+          folderDiv.onclick = () => {
+            if (collapsedFolders.has(node.path)) {
+              collapsedFolders.delete(node.path);
+            } else {
+              collapsedFolders.add(node.path);
+            }
+            renderTree();
+          };
+
+          treeView.appendChild(folderDiv);
+
+          // Render children if not collapsed
+          if (!isCollapsed) {
+            const sortedKeys = Object.keys(node.children).sort((a, b) => {
+              const nodeA = node.children[a];
+              const nodeB = node.children[b];
+              if (nodeA.type !== nodeB.type) return nodeA.type === 'folder' ? -1 : 1;
+              return a.localeCompare(b);
+            });
+
+            sortedKeys.forEach((key) => {
+              renderNode(node.children[key], depth + 1);
+            });
+          }
+        } else if (node.type === 'file') {
+          const fileDiv = document.createElement('div');
+          fileDiv.className = `tree-node-file ${node.path === activeFile ? 'active' : ''}`;
+          fileDiv.style.paddingLeft = `${16 + indentPx}px`;
+
+          const left = document.createElement('div');
+          left.className = 'file-left';
+          left.innerHTML = `<span class="file-icon-js">JS</span><span>${node.name}</span>`;
+          fileDiv.appendChild(left);
+
+          // Delete button for non-main files
+          if (node.path !== 'src/main.js' && node.name !== 'main.js') {
+            const delBtn = document.createElement('span');
+            delBtn.className = 'btn-delete-node';
+            delBtn.innerHTML = '🗑️';
+            delBtn.title = '刪除檔案';
+            delBtn.onclick = (e) => {
+              e.stopPropagation();
+              if (confirm(`確定要刪除 ${node.path} 嗎？`)) {
+                delete files[node.path];
+                if (activeFile === node.path) {
+                  activeFile = 'src/main.js';
+                }
+                renderTree();
+                activeFilePath.textContent = activeFile;
+                jsInput.value = files[activeFile] || '';
+                doTranspile();
+              }
+            };
+            fileDiv.appendChild(delBtn);
+          }
+
+          fileDiv.onclick = () => {
+            files[activeFile] = jsInput.value;
+            activeFile = node.path;
+            renderTree();
+            activeFilePath.textContent = activeFile;
+            jsInput.value = files[activeFile] || '';
+            doTranspile();
+          };
+
+          treeView.appendChild(fileDiv);
+        }
+      }
+
+      renderNode(root, 0);
+    }
+
+    // Add Folder Action
+    addFolderBtn.onclick = () => {
+      const folderName = prompt('請輸入要新增在 src/ 下的資料夾名稱 (例如 utils 或 helpers):');
+      if (folderName && folderName.trim()) {
+        const clean = folderName.trim().replace(/^\//, '').replace(/\/$/, '');
+        const fullPath = `src/${clean}`;
+        folders.add(fullPath);
+        renderTree();
+      }
+    };
+
+    // Add File Action
     addFileBtn.onclick = () => {
-      const name = prompt('請輸入要新增在 src/ 下的模組檔名 (例如 utils.js):', 'utils.js');
-      if (name && name.trim()) {
-        let validName = name.trim();
-        if (!validName.endsWith('.js')) validName += '.js';
-        if (files[validName]) {
-          alert('該檔名已存在！');
+      const fileName = prompt('請輸入要新增的檔案路徑 (例如 calc.js 或 utils/calc.js):', 'calc.js');
+      if (fileName && fileName.trim()) {
+        let clean = fileName.trim().replace(/^\//, '');
+        if (!clean.endsWith('.js')) clean += '.js';
+
+        const fullPath = clean.startsWith('src/') ? clean : `src/${clean}`;
+
+        if (files[fullPath]) {
+          alert('該檔案已存在！');
           return;
         }
-        const baseName = validName.replace('.js', '');
-        files[validName] = `/**\n * ${baseName} 模組\n */\nexport function helper() {\n  return "來自 ${validName}";\n}\n`;
-        activeFile = validName;
+
+        // Auto add parent folders if needed
+        const parts = fullPath.split('/');
+        if (parts.length > 2) {
+          const parentFolder = parts.slice(0, parts.length - 1).join('/');
+          folders.add(parentFolder);
+        }
+
+        const baseModName = parts[parts.length - 1].replace('.js', '');
+        files[fullPath] = `/**\n * ${baseModName} 模組\n */\nexport function calc() {\n  return 42;\n}\n`;
+        activeFile = fullPath;
         renderTree();
-        activeFileName.textContent = activeFile;
+        activeFilePath.textContent = activeFile;
         jsInput.value = files[activeFile];
         doTranspile();
       }
     };
 
-    // Handle template changes
+    // Template change handler
     templateSelect.addEventListener('change', (e) => {
-      const selected = e.target.value;
-      if (TEMPLATES[selected]) {
-        files = JSON.parse(JSON.stringify(TEMPLATES[selected]));
-        activeFile = Object.keys(files)[0] || 'main.js';
+      const sel = e.target.value;
+      if (TEMPLATES[sel]) {
+        currentTemplate = TEMPLATES[sel];
+        folders = new Set(currentTemplate.folders);
+        files = JSON.parse(JSON.stringify(currentTemplate.files));
+        activeFile = Object.keys(files)[0] || 'src/main.js';
         renderTree();
-        activeFileName.textContent = activeFile;
+        activeFilePath.textContent = activeFile;
         jsInput.value = files[activeFile];
         doTranspile();
       }
@@ -697,7 +856,7 @@ function main() {
       debounceTimer = setTimeout(doTranspile, 250);
     });
 
-    // Handle Tab key in textarea
+    // Handle Tab key
     jsInput.addEventListener('keydown', (e) => {
       if (e.key === 'Tab') {
         e.preventDefault();
@@ -714,7 +873,7 @@ function main() {
       }
     });
 
-    // Call local transpile API
+    // Transpile all files into Rust
     async function doTranspile() {
       try {
         transpileStatus.textContent = '轉譯中...';
@@ -819,10 +978,10 @@ function main() {
       return div.innerHTML;
     }
 
-    // Initial Load
+    // Init
     renderTree();
-    activeFileName.textContent = activeFile;
-    jsInput.value = files[activeFile];
+    activeFilePath.textContent = activeFile;
+    jsInput.value = files[activeFile] || '';
     doTranspile();
   </script>
 </body>
