@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "playground": "node playground/server.js"
   },
   "keywords": [
     "javascript",

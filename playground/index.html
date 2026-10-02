@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>js-to-rust Playground 🦀</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+  <style>
+    :root {
+      --bg-dark: #12141a;
+      --bg-panel: #1a1d24;
+      --bg-editor: #16181f;
+      --border-color: #2b303c;
+      --text-main: #e6edf3;
+      --text-muted: #8b949e;
+      --accent-rust: #e05d44;
+      --accent-green: #2ea043;
+      --accent-green-hover: #3fb950;
+      --accent-blue: #58a6ff;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      background-color: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 58px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+
+    .brand span.crab {
+      font-size: 1.4rem;
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      background-color: rgba(224, 93, 68, 0.15);
+      color: var(--accent-rust);
+      border: 1px solid rgba(224, 93, 68, 0.3);
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    select {
+      background: var(--bg-editor);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 16px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-run {
+      background-color: var(--accent-green);
+      color: #fff;
+    }
+
+    .btn-run:hover:not(:disabled) {
+      background-color: var(--accent-green-hover);
+    }
+
+    .btn-run:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background-color: #21262d;
+      color: #c9d1d9;
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-secondary:hover {
+      background-color: #30363d;
+    }
+
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      border-right: 1px solid var(--border-color);
+      overflow: hidden;
+    }
+
+    .panel:last-child {
+      border-right: none;
+    }
+
+    .panel-header {
+      background-color: var(--bg-panel);
+      padding: 8px 16px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 38px;
+    }
+
+    .editor-container {
+      flex: 1;
+      position: relative;
+      display: flex;
+      background: var(--bg-editor);
+      overflow: hidden;
+    }
+
+    textarea#jsInput {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      color: #e6edf3;
+      font-family: "Fira Code", "Cascadia Code", Consolas, Monaco, monospace;
+      font-size: 13.5px;
+      line-height: 1.6;
+      padding: 16px;
+      border: none;
+      outline: none;
+      resize: none;
+      white-space: pre;
+      overflow: auto;
+      tab-size: 2;
+    }
+
+    .right-split {
+      display: grid;
+      grid-template-rows: 1fr 240px;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .rust-preview {
+      background: var(--bg-editor);
+      overflow: auto;
+      position: relative;
+      padding: 0;
+    }
+
+    pre#rustCode {
+      margin: 0;
+      padding: 16px;
+      background: transparent !important;
+      font-family: "Fira Code", "Cascadia Code", Consolas, Monaco, monospace;
+      font-size: 13.5px;
+      line-height: 1.6;
+      height: 100%;
+      overflow: auto;
+    }
+
+    .terminal-panel {
+      background: #0d1117;
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .terminal-header {
+      background: #161b22;
+      padding: 6px 16px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .terminal-output {
+      flex: 1;
+      padding: 12px 16px;
+      font-family: "Fira Code", Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.5;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    .status-tag {
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    .status-idle { background: #21262d; color: #8b949e; }
+    .status-running { background: #1f6feb33; color: #58a6ff; }
+    .status-success { background: #23863633; color: #3fb950; }
+    .status-error { background: #da363333; color: #f85149; }
+
+    .stdout-text { color: #56d364; }
+    .stderr-text { color: #8b949e; }
+    .error-text { color: #f85149; }
+
+    .spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      border-top-color: #fff;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span class="crab">🦀</span>
+      <span>js-to-rust Playground</span>
+      <span class="badge">v0.1.0</span>
+    </div>
+
+    <div class="actions">
+      <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">選擇範本：</label>
+      <select id="templateSelect">
+        <option value="fibonacci">遞迴斐波那契數列 (Fibonacci)</option>
+        <option value="prime">質數篩選 (Prime Check)</option>
+        <option value="sumArray">陣列加總 (Array Sum)</option>
+        <option value="custom">自訂空白程式碼 (Empty)</option>
+      </select>
+
+      <button id="copyBtn" class="btn btn-secondary">📋 複製 Rust 代碼</button>
+
+      <button id="runBtn" class="btn btn-run">
+        <span id="runIcon">▶</span>
+        <span>在線編譯並執行 Rust</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left: JavaScript Editor -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>JavaScript 輸入 (支援 JSDoc 型別與自動推導)</span>
+        <span style="font-size: 0.75rem; color: #58a6ff;">即時轉譯 (Live)</span>
+      </div>
+      <div class="editor-container">
+        <textarea id="jsInput" spellcheck="false" placeholder="在此輸入你的 JavaScript 演算法..."></textarea>
+      </div>
+    </div>
+
+    <!-- Right: Rust Output & Terminal -->
+    <div class="panel">
+      <div class="right-split">
+        <!-- Rust Code View -->
+        <div style="display: flex; flex-direction: column; overflow: hidden;">
+          <div class="panel-header">
+            <span>轉譯產生的 Rust 程式碼</span>
+            <span id="transpileStatus" style="font-size: 0.75rem; color: #3fb950;">轉譯完成</span>
+          </div>
+          <div class="rust-preview">
+            <pre><code id="rustCode" class="language-rust"></code></pre>
+          </div>
+        </div>
+
+        <!-- Terminal Output -->
+        <div class="terminal-panel">
+          <div class="terminal-header">
+            <span>官方 Rust Playground 執行結果</span>
+            <span id="execBadge" class="status-tag status-idle">等待執行</span>
+          </div>
+          <div id="terminalOutput" class="terminal-output">點擊上方「▶ 在線編譯並執行 Rust」按鈕，立即透過 Rust 官方 Playground 進行線上編譯與執行！</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const TEMPLATES = {
+      fibonacci: `/**
+ * 遞迴斐波那契數列
+ * @param {int} n
+ * @returns {int}
+ */
+function fibonacci(n) {
+  if (n <= 1) {
+    return n;
+  }
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+function main() {
+  const result = fibonacci(10);
+  console.log("Fibonacci(10) =", result);
+}`,
+
+      prime: `/**
+ * 質數檢查
+ * @param {int} n
+ * @returns {bool}
+ */
+function isPrime(n) {
+  if (n <= 1) {
+    return false;
+  }
+  const limit = Math.floor(Math.sqrt(n));
+  for (let i = 2; i <= limit; i++) {
+    if (n % i === 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function main() {
+  const testNum = 37;
+  const prime = isPrime(testNum);
+  console.log("Is", testNum, "a prime number?", prime);
+}`,
+
+      sumArray: `/**
+ * 計算陣列元素總和
+ * @param {int[]} nums
+ * @returns {int}
+ */
+function sumArray(nums) {
+  let total = 0;
+  for (let i = 0; i < nums.length; i++) {
+    total += nums[i];
+  }
+  return total;
+}
+
+function main() {
+  const scores = [85, 92, 78, 96, 88];
+  const total = sumArray(scores);
+  console.log("總分為:", total);
+}`,
+
+      custom: `function add(a, b) {
+  return a + b;
+}
+
+function main() {
+  console.log("Result:", add(10, 20));
+}`
+    };
+
+    const jsInput = document.getElementById('jsInput');
+    const rustCode = document.getElementById('rustCode');
+    const transpileStatus = document.getElementById('transpileStatus');
+    const templateSelect = document.getElementById('templateSelect');
+    const runBtn = document.getElementById('runBtn');
+    const runIcon = document.getElementById('runIcon');
+    const copyBtn = document.getElementById('copyBtn');
+    const execBadge = document.getElementById('execBadge');
+    const terminalOutput = document.getElementById('terminalOutput');
+
+    let currentRustCode = '';
+    let debounceTimer = null;
+
+    // Load initial template
+    jsInput.value = TEMPLATES.fibonacci;
+
+    // Handle template change
+    templateSelect.addEventListener('change', (e) => {
+      const selected = e.target.value;
+      if (TEMPLATES[selected]) {
+        jsInput.value = TEMPLATES[selected];
+        doTranspile();
+      }
+    });
+
+    // Handle Tab key in textarea
+    jsInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = jsInput.selectionStart;
+        const end = jsInput.selectionEnd;
+        jsInput.value = jsInput.value.substring(0, start) + '  ' + jsInput.value.substring(end);
+        jsInput.selectionStart = jsInput.selectionEnd = start + 2;
+        doTranspile();
+      }
+      // Ctrl + Enter to run
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        runRustCode();
+      }
+    });
+
+    // Handle input with debounce
+    jsInput.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(doTranspile, 250);
+    });
+
+    // Call local transpile API
+    async function doTranspile() {
+      const code = jsInput.value;
+      try {
+        transpileStatus.textContent = '轉譯中...';
+        transpileStatus.style.color = '#58a6ff';
+
+        const res = await fetch('/api/transpile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+
+        const data = await res.json();
+        if (data.error) {
+          transpileStatus.textContent = '轉譯語法錯誤';
+          transpileStatus.style.color = '#f85149';
+          rustCode.textContent = `// 轉譯錯誤:\n// ${data.error}`;
+        } else {
+          currentRustCode = data.rust;
+          rustCode.textContent = data.rust;
+          transpileStatus.textContent = '轉譯完成';
+          transpileStatus.style.color = '#3fb950';
+          hljs.highlightElement(rustCode);
+        }
+      } catch (err) {
+        transpileStatus.textContent = '連線失敗';
+        transpileStatus.style.color = '#f85149';
+      }
+    }
+
+    // Run Rust code via online compiler API
+    async function runRustCode() {
+      if (!currentRustCode || currentRustCode.trim() === '') {
+        alert('請先輸入 JavaScript 程式碼以產生 Rust！');
+        return;
+      }
+
+      runBtn.disabled = true;
+      runIcon.innerHTML = '<span class="spinner"></span>';
+      execBadge.className = 'status-tag status-running';
+      execBadge.textContent = '編譯並執行中...';
+      terminalOutput.innerHTML = '<span class="stderr-text">正在向官方 Rust Playground 發送請求編譯並執行...</span>';
+
+      try {
+        const payload = {
+          channel: "stable",
+          mode: "debug",
+          edition: "2021",
+          crateType: "bin",
+          tests: false,
+          code: currentRustCode
+        };
+
+        const res = await fetch('https://play.rust-lang.org/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+          execBadge.className = 'status-tag status-success';
+          execBadge.textContent = '執行成功 (Status: 0)';
+          
+          let outputHtml = '';
+          if (data.stdout) {
+            outputHtml += `<div class="stdout-text"><strong>[執行輸出 stdout]:</strong>\n${escapeHtml(data.stdout)}</div>\n`;
+          }
+          if (data.stderr) {
+            outputHtml += `<div class="stderr-text"><strong>[編譯訊息 stderr]:</strong>\n${escapeHtml(data.stderr)}</div>`;
+          }
+          terminalOutput.innerHTML = outputHtml || '<span class="stdout-text">程式執行完畢，無輸出內容。</span>';
+        } else {
+          execBadge.className = 'status-tag status-error';
+          execBadge.textContent = '編譯/執行失敗';
+          terminalOutput.innerHTML = `<div class="error-text"><strong>[錯誤訊息]:</strong>\n${escapeHtml(data.stderr || data.stdout || '未知錯誤')}</div>`;
+        }
+      } catch (err) {
+        execBadge.className = 'status-tag status-error';
+        execBadge.textContent = '連線錯誤';
+        terminalOutput.innerHTML = `<div class="error-text">無法連接到 Rust Playground API: ${escapeHtml(err.message)}</div>`;
+      } finally {
+        runBtn.disabled = false;
+        runIcon.textContent = '▶';
+      }
+    }
+
+    runBtn.addEventListener('click', runRustCode);
+
+    copyBtn.addEventListener('click', () => {
+      if (!currentRustCode) return;
+      navigator.clipboard.writeText(currentRustCode).then(() => {
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = '✓ 已複製！';
+        setTimeout(() => { copyBtn.textContent = originalText; }, 1500);
+      });
+    });
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Initial Transpilation
+    doTranspile();
+  </script>
+</body>
+</html>

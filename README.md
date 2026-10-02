@@ -22,7 +22,18 @@
 
 ## 🚀 快速開始 (Quick Start)
 
-### 1. 執行測試範例
+### 1. 啟動互動式網頁測試介面 (Playground Web UI)
+
+```bash
+npm run playground
+```
+
+開啟瀏覽器前往 `http://localhost:3000`：
+* **左側**：輸入純 JavaScript（支援 JSDoc 或自動推導）。
+* **右側**：即時看到轉譯出的 Rust 語法，並提供 **「▶ 在線編譯並執行 Rust」** 按鈕！
+* **直接連線官方 Rust Playground**：自動回傳編譯狀態、`stdout` 執行輸出與 `stderr` 編譯訊息。
+
+### 2. 命令列 CLI 執行
 
 ```bash
 npm start -- test/example.js
@@ -34,7 +45,7 @@ npm start -- test/example.js
 npm start -- test/example.js -o output.rs
 ```
 
-### 2. 跑單元測試
+### 3. 跑單元測試
 
 ```bash
 npm test
