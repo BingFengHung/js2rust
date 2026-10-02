@@ -63,7 +63,7 @@ export class RustEmitter {
     this.indentSize = options.indentSize || 4;
     this.indentLevel = 0;
     this.defaultNumberType = options.defaultNumberType || 'i64';
-    this.signatures = new Map(); // fnName -> Array<{ name: string, type: string, isMut: boolean, isStruct: boolean }>
+    this.signatures = new Map(options.sharedSignatures || []); // fnName -> Array<{ name: string, type: string, isMut: boolean, isStruct: boolean }>
     this.structs = new Map(options.sharedStructs || []);    // structName -> Array<{ name: string, type: string }>
     this.rootAst = null;
     this.needThread = false;
@@ -1258,6 +1258,29 @@ export class RustEmitter {
       }
       if (method === 'pop') {
         return `${obj}.pop()`;
+      }
+      if (method === 'slice') {
+        const args = node.arguments;
+        if (args.length === 0) {
+          return `&${obj}[..]`;
+        }
+        const startNode = args[0];
+        let start = this.emit(startNode);
+        if (startNode.type !== 'NumericLiteral') {
+          start = `((${start}) as usize)`;
+        } else {
+          start = `${startNode.value}`;
+        }
+        if (args.length === 1) {
+          return `&${obj}[${start}..]`;
+        }
+        const endNode = args[1];
+        let end = this.emit(endNode);
+        if (endNode.type === 'MemberExpression' && endNode.property.name === 'length' && this.emit(endNode.object) === obj) {
+          return `&${obj}[${start}..]`;
+        }
+        end = `((${end}) as usize)`;
+        return `&${obj}[${start}..${end}]`;
       }
       if (method === 'includes') {
         const val = this.emit(node.arguments[0]);

@@ -420,6 +420,19 @@ export function calculateTotal(subtotal, discount, taxPercent) {
   assert(rust.includes('return "foo".to_string();'), 'Translates resolve("foo") to return String');
 }
 
+{
+  const js = `
+  function testSlice(arr) {
+    const left = arr.slice(0, arr.length / 2);
+    const right = arr.slice(arr.length / 2, arr.length);
+    return left;
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('&arr[0..(((arr.len() as i64) / 2) as usize)]'), 'Translates arr.slice(0, arr.length / 2) to Rust slice range');
+  assert(rust.includes('&arr[(((arr.len() as i64) / 2) as usize)..]'), 'Translates arr.slice(mid, arr.length) to Rust slice range to end');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);

@@ -5,7 +5,7 @@
 
 import { parse } from '@babel/parser';
 import { transpile } from './index.js';
-import { doesMethodMutateThis } from './codegen.js';
+import { RustEmitter, doesMethodMutateThis } from './codegen.js';
 
 /**
  * Normalizes a file path by removing leading './' or 'src/'
@@ -36,12 +36,15 @@ function findMainFilename(files) {
 }
 
 /**
- * Scans all module files to collect shared enums, classes, and mutating methods
+ * Scans all module files to collect shared enums, classes, signatures, and mutating methods
  */
 function collectCrossModuleMetadata(files, options) {
   const sharedEnums = new Set(options.sharedEnums || []);
   const sharedMutatingMethods = new Set(options.sharedMutatingMethods || []);
   const sharedClasses = new Set(options.sharedClasses || []);
+  const sharedSignatures = new Map(options.sharedSignatures || []);
+
+  const metaEmitter = new RustEmitter(options);
 
   for (const rawPath of Object.keys(files)) {
     try {
@@ -50,6 +53,8 @@ function collectCrossModuleMetadata(files, options) {
         allowReturnOutsideFunction: true,
         plugins: ['classProperties', 'numericSeparator', 'typescript'],
       });
+      metaEmitter.collectSignatures(ast.program, ast);
+
       for (let stmt of ast.program.body) {
         if ((stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration') && stmt.declaration) {
           stmt = stmt.declaration;
@@ -72,11 +77,14 @@ function collectCrossModuleMetadata(files, options) {
     }
   }
 
+  metaEmitter.signatures.forEach((val, key) => sharedSignatures.set(key, val));
+
   return {
     ...options,
     sharedEnums,
     sharedMutatingMethods,
     sharedClasses,
+    sharedSignatures,
   };
 }
 
@@ -157,7 +165,7 @@ export function transpileMultiModules(files, options = {}) {
 
   const modulesRust = renderTree(rootModule);
 
-  let finalOutput = '#![allow(unused_imports, unused_variables, dead_code)]\n\n';
+  let finalOutput = '#![allow(unused_imports, unused_variables, dead_code, non_snake_case)]\n\n';
   if (modulesRust.trim()) {
     finalOutput += `// === Modules & Nested Folders ===\n${modulesRust}`;
   }
@@ -253,7 +261,7 @@ ${dependencies}`;
   const mainJsCode = files[mainFilename] || '';
   const mainCompiled = transpile(mainJsCode, moduleOptions);
 
-  let mainRsHeader = '#![allow(unused_imports, unused_variables, dead_code)]\n\n';
+  let mainRsHeader = '#![allow(unused_imports, unused_variables, dead_code, non_snake_case)]\n\n';
   if (topLevelMods.size > 0) {
     const sortedTopMods = Array.from(topLevelMods).sort();
     mainRsHeader += sortedTopMods.map((m) => `mod ${m};`).join('\n') + '\n\n';
