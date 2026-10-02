@@ -83,6 +83,81 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('firstItem(&list)'), 'Auto-borrows &list when passing vector to slice');
 }
 
+// Test 5: Auto-detection of mutable borrowing (&mut)
+{
+  const js = `
+  /**
+   * @param {int[]} arr
+   */
+  function modifyArr(arr) {
+    arr[0] = 999;
+  }
+
+  function main() {
+    let nums = [1, 2, 3];
+    modifyArr(nums);
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub fn modifyArr(arr: &mut [i64])'), 'Auto-detects mutation and infers &mut [i64]');
+  assert(rust.includes('modifyArr(&mut nums)'), 'Auto-passes &mut nums at call site');
+}
+
+// Test 6: Pattern Matching (Switch -> Rust Match)
+{
+  const js = `
+  function handleCode(code) {
+    switch (code) {
+      case 200:
+        return "OK";
+      default:
+        return "ERROR";
+    }
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('match code {'), 'Translates switch to Rust match expression');
+  assert(rust.includes('200 => {'), 'Generates match arm');
+  assert(rust.includes('_ => {'), 'Generates default match arm');
+}
+
+// Test 7: Struct Definition & Instantiation
+{
+  const js = `
+  /**
+   * @typedef {Object} Vector2D
+   * @property {float} x
+   * @property {float} y
+   */
+
+  function getLength(v) {
+    return v.x + v.y;
+  }
+
+  function main() {
+    const v = { x: 1.0, y: 2.0 };
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub struct Vector2D {'), 'Generates Rust struct from @typedef');
+  assert(rust.includes('pub x: f64,'), 'Generates struct properties');
+  assert(rust.includes('Vector2D { x: 1.0, y: 2.0 }'), 'Instantiates struct from object literal');
+}
+
+// Test 8: Template Literals & Ternary Operator
+{
+  const js = `
+  function greet(name, age) {
+    const status = age >= 18 ? "adult" : "minor";
+    const msg = \`Hello \${name}, you are \${status}\`;
+    return msg;
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('if age >= 18 { "adult" } else { "minor" }'), 'Translates ternary operator to if-else');
+  assert(rust.includes('format!("Hello {}, you are {}", name, status)'), 'Translates template literal to format!');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);

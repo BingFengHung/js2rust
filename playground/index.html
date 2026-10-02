@@ -278,6 +278,7 @@
     <div class="actions">
       <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">選擇範本：</label>
       <select id="templateSelect">
+        <option value="advanced">🔥 進階全功能示範 (Struct, Match, &mut, 範本字串)</option>
         <option value="fibonacci">遞迴斐波那契數列 (Fibonacci)</option>
         <option value="prime">質數篩選 (Prime Check)</option>
         <option value="sumArray">陣列加總 (Array Sum)</option>
@@ -333,6 +334,74 @@
 
   <script>
     const TEMPLATES = {
+      advanced: `/**
+ * 2D 結構體定義 (Struct)
+ * @typedef {Object} Point
+ * @property {float} x
+ * @property {float} y
+ */
+
+/**
+ * 計算點到原點距離
+ * @param {Point} p
+ * @returns {float}
+ */
+function distanceFromOrigin(p) {
+  return Math.sqrt(p.x * p.x + p.y * p.y);
+}
+
+/**
+ * 原地修改陣列測試
+ * (js-to-rust 自動靜態分析偵測修改，自動產生 &mut [i64] 可變借用！)
+ * @param {int[]} arr
+ */
+function resetFirst(arr) {
+  arr[0] = 0;
+}
+
+/**
+ * 模式匹配 (Switch -> Rust Match)
+ * @param {int} code
+ * @returns {string}
+ */
+function getStatus(code) {
+  switch (code) {
+    case 200:
+      return "OK";
+    case 404:
+      return "Not Found";
+    case 500:
+      return "Server Error";
+    default:
+      return "Unknown";
+  }
+}
+
+function main() {
+  // 1. 結構體建立與借用傳遞 (&Point)
+  const pt = { x: 3.0, y: 4.0 };
+  const dist = distanceFromOrigin(pt);
+  console.log("Distance from origin =", dist);
+
+  // 2. 模式匹配 (Match)
+  const statusMsg = getStatus(200);
+  console.log("Status message =", statusMsg);
+
+  // 3. 自動可變借用 (&mut numbers)
+  let numbers = [100, 200, 300];
+  resetFirst(numbers);
+  console.log("After resetFirst =", numbers);
+
+  // 4. Vector 方法 (.push 與 .includes -> .contains)
+  numbers.push(400);
+  console.log("Contains 400?", numbers.includes(400));
+
+  // 5. 範本字串與三元運算子
+  const score = 85;
+  const grade = score >= 60 ? "PASS" : "FAIL";
+  console.log(\`Student Score: \${score}, Result: \${grade}\`);
+}`,
+
       fibonacci: `/**
  * 遞迴斐波那契數列
  * @param {int} n

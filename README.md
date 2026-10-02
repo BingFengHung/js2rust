@@ -8,7 +8,12 @@
 ## ✨ 核心特色 (Features)
 
 * **純 JavaScript 開發**：不需要先搞懂複雜的 TypeScript 設定或編譯器，用標準 Node.js 即可開發與執行。
-* **原生 JSDoc 型別支援**：支援用 `@param` 與 `@returns` 標註型別，亦可由轉譯器自動推導數值。
+* **🛡️ 結構體映射 (Rust Structs)**：支援 JSDoc `@typedef`，自動生成帶有 `#[derive(Debug, Clone)]` 的 Rust `struct`。
+* **🔥 自動靜態分析可變借用 (`&mut` Auto-Inference)**：函式內若有修改陣列（`arr[0] = 0` 或 `arr.push(x)`），轉譯器自動推導參數為 `&mut [T]`，並在呼叫端自動補上 `&mut`！
+* **🎯 模式匹配 (Pattern Matching)**：將 JavaScript 的 `switch / case` 自動轉譯為 Rust 原生的 `match` 表達式！
+* **✨ 範本字串與格式化**：自動將 `` `Hello ${name}` `` 轉譯為 Rust 的 `format!("Hello {}", name)`。
+* **🔀 三元運算子**：`cond ? a : b` 自動轉換為 Rust 表達式 `if cond { a } else { b }`。
+* **📦 容器方法**：支援陣列 `.push()`、`.pop()`、`.includes()`（轉為 `.contains(&x)`）。
 * **智慧型借用與切片 (Auto-Borrowing & Slicing)**：
   * 自動將 JavaScript 陣列映射為 Rust 的切片借用 `&[T]` 或動態向量 `Vec<T>`。
   * 傳遞參數時，自動加上引用符號 `&`，完美符合 Rust Borrow Checker！

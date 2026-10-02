@@ -1,5 +1,5 @@
 /**
- * Code Generator: Converts AST nodes to formatted Rust source code.
+ * Advanced Code Generator: Converts AST nodes to formatted, idiomatic Rust.
  */
 
 import { parseJSDoc, mapToRustType } from './types.js';
@@ -9,7 +9,8 @@ export class RustEmitter {
     this.indentSize = options.indentSize || 4;
     this.indentLevel = 0;
     this.defaultNumberType = options.defaultNumberType || 'i64';
-    this.signatures = new Map(); // function name -> Array of param types
+    this.signatures = new Map(); // fnName -> Array<{ name: string, type: string, isMut: boolean, isStruct: boolean }>
+    this.structs = new Map();    // structName -> Array<{ name: string, type: string }>
   }
 
   indent() {
@@ -24,21 +25,118 @@ export class RustEmitter {
   }
 
   /**
-   * Pre-scan to collect function signatures for auto-borrowing and type resolution
+   * Scans all comments in AST for @typedef structs
    */
-  collectSignatures(node) {
-    if (!node || !node.body) return;
-    for (const stmt of node.body) {
+  collectTypeDefs(comments = []) {
+    for (const comment of comments) {
+      if (comment.type === 'CommentBlock' && comment.value.startsWith('*')) {
+        const parsed = parseJSDoc([comment]);
+        if (parsed.typedef) {
+          this.structs.set(parsed.typedef.name, parsed.typedef.properties);
+        }
+      }
+    }
+  }
+
+  /**
+   * Collects function signatures and runs static analysis for parameter mutability (&mut)
+   */
+  collectSignatures(programNode) {
+    if (!programNode || !programNode.body) return;
+
+    for (const stmt of programNode.body) {
       if (stmt.type === 'FunctionDeclaration') {
         const fnName = stmt.id.name;
         const jsdoc = parseJSDoc(stmt.leadingComments);
-        const paramTypes = stmt.params.map((param) => {
-          const jsType = jsdoc.params[param.name] || this.defaultNumberType;
-          return mapToRustType(jsType);
+        const mutatedParams = this.findMutatedParams(stmt);
+
+        const paramInfos = stmt.params.map((param) => {
+          const name = param.name;
+          const isMut = mutatedParams.has(name);
+          const rawType = jsdoc.params[name] || this.defaultNumberType;
+
+          let isStruct = false;
+          let rustType = '';
+
+          if (this.structs.has(rawType)) {
+            isStruct = true;
+            rustType = isMut ? `&mut ${rawType}` : `&${rawType}`;
+          } else {
+            rustType = mapToRustType(rawType, false, isMut);
+          }
+
+          return { name, type: rustType, isMut, isStruct };
         });
-        this.signatures.set(fnName, paramTypes);
+
+        this.signatures.set(fnName, paramInfos);
       }
     }
+  }
+
+  /**
+   * Static analysis: detects whether a parameter is mutated within the function body
+   */
+  findMutatedParams(fnNode) {
+    const mutated = new Set();
+    const paramNames = new Set(fnNode.params.map((p) => p.name));
+
+    const checkNode = (node) => {
+      if (!node || typeof node !== 'object') return;
+
+      // 1. Assignment: arr[i] = val OR arr = val
+      if (node.type === 'AssignmentExpression') {
+        if (node.left.type === 'Identifier' && paramNames.has(node.left.name)) {
+          mutated.add(node.left.name);
+        } else if (node.left.type === 'MemberExpression') {
+          let curr = node.left.object;
+          while (curr && curr.type === 'MemberExpression') curr = curr.object;
+          if (curr && curr.type === 'Identifier' && paramNames.has(curr.name)) {
+            mutated.add(curr.name);
+          }
+        }
+      }
+
+      // 2. UpdateExpression: arr[i]++ or i++
+      if (node.type === 'UpdateExpression') {
+        let curr = node.argument;
+        while (curr && curr.type === 'MemberExpression') curr = curr.object;
+        if (curr && curr.type === 'Identifier' && paramNames.has(curr.name)) {
+          mutated.add(curr.name);
+        }
+      }
+
+      // 3. Mutating methods: arr.push(), arr.pop()
+      if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
+        const method = node.callee.property.name;
+        if (['push', 'pop', 'reverse', 'sort', 'splice'].includes(method)) {
+          const obj = node.callee.object;
+          if (obj.type === 'Identifier' && paramNames.has(obj.name)) {
+            mutated.add(obj.name);
+          }
+        }
+      }
+
+      for (const key of Object.keys(node)) {
+        if (key === 'leadingComments' || key === 'trailingComments') continue;
+        const child = node[key];
+        if (Array.isArray(child)) {
+          child.forEach(checkNode);
+        } else if (child && typeof child === 'object') {
+          checkNode(child);
+        }
+      }
+    };
+
+    if (fnNode.body) {
+      checkNode(fnNode.body);
+    }
+
+    return mutated;
+  }
+
+  emitProgramWithAst(ast) {
+    this.collectTypeDefs(ast.comments || []);
+    return this.emitProgram(ast.program);
   }
 
   emit(node) {
@@ -60,6 +158,9 @@ export class RustEmitter {
       case 'IfStatement':
         return this.emitIfStatement(node);
 
+      case 'SwitchStatement':
+        return this.emitSwitchStatement(node);
+
       case 'WhileStatement':
         return this.emitWhileStatement(node);
 
@@ -69,6 +170,12 @@ export class RustEmitter {
       case 'ForOfStatement':
         return this.emitForOfStatement(node);
 
+      case 'BreakStatement':
+        return `${this.indent()}break;`;
+
+      case 'ContinueStatement':
+        return `${this.indent()}continue;`;
+
       case 'ReturnStatement':
         return `${this.indent()}return ${this.emit(node.argument)};`;
 
@@ -76,6 +183,7 @@ export class RustEmitter {
         return `${this.indent()}${this.emit(node.expression)};`;
 
       case 'BinaryExpression':
+      case 'LogicalExpression':
         return this.emitBinaryExpression(node);
 
       case 'UnaryExpression':
@@ -87,6 +195,9 @@ export class RustEmitter {
       case 'AssignmentExpression':
         return `${this.emit(node.left)} ${node.operator} ${this.emit(node.right)}`;
 
+      case 'ConditionalExpression':
+        return `if ${this.emit(node.test)} { ${this.emit(node.consequent)} } else { ${this.emit(node.alternate)} }`;
+
       case 'CallExpression':
         return this.emitCallExpression(node);
 
@@ -96,8 +207,15 @@ export class RustEmitter {
       case 'ArrayExpression':
         return `vec![${node.elements.map((e) => this.emit(e)).join(', ')}]`;
 
+      case 'ObjectExpression':
+        return this.emitObjectExpression(node);
+
+      case 'TemplateLiteral':
+        return this.emitTemplateLiteral(node);
+
       case 'NumericLiteral':
-        return String(node.value);
+        // Output floating point if contains dot, otherwise regular number
+        return String(node.value).includes('.') ? String(node.value) : String(node.value);
 
       case 'StringLiteral':
         return `"${node.value}"`;
@@ -116,24 +234,32 @@ export class RustEmitter {
 
   emitProgram(node) {
     this.collectSignatures(node);
-    return node.body.map((stmt) => this.emit(stmt)).join('\n\n') + '\n';
+
+    let output = '';
+
+    // 1. Emit generated Rust Structs from JSDoc @typedef
+    for (const [name, props] of this.structs.entries()) {
+      output += `#[derive(Debug, Clone)]\npub struct ${name} {\n`;
+      for (const p of props) {
+        output += `    pub ${p.name}: ${p.type},\n`;
+      }
+      output += `}\n\n`;
+    }
+
+    // 2. Emit functions and other statements
+    output += node.body.map((stmt) => this.emit(stmt)).join('\n\n') + '\n';
+    return output;
   }
 
   emitFunctionDeclaration(node) {
     const fnName = node.id.name;
     const jsdoc = parseJSDoc(node.leadingComments);
-
     const isMain = fnName === 'main';
 
-    // Parse parameters
-    const params = node.params.map((param) => {
-      const name = param.name;
-      const jsType = jsdoc.params[name] || this.defaultNumberType;
-      const rustType = mapToRustType(jsType);
-      return `${name}: ${rustType}`;
-    }).join(', ');
+    const paramInfos = this.signatures.get(fnName) || [];
+    const params = paramInfos.map((p) => `${p.name}: ${p.type}`).join(', ');
 
-    // Parse return type
+    // Return type
     let returnClause = '';
     if (!isMain && jsdoc.returns && jsdoc.returns !== 'void') {
       const rustRet = mapToRustType(jsdoc.returns, true);
@@ -194,6 +320,29 @@ export class RustEmitter {
     return result;
   }
 
+  emitSwitchStatement(node) {
+    const discriminant = this.emit(node.discriminant);
+    let output = `${this.indent()}match ${discriminant} {\n`;
+
+    this.withIndent(() => {
+      for (const cs of node.cases) {
+        const pattern = cs.test ? this.emit(cs.test) : '_';
+        const filteredStmts = cs.consequent.filter((s) => s.type !== 'BreakStatement');
+        
+        output += `${this.indent()}${pattern} => {\n`;
+        this.withIndent(() => {
+          for (const s of filteredStmts) {
+            output += `${this.emit(s)}\n`;
+          }
+        });
+        output += `${this.indent()}},\n`;
+      }
+    });
+
+    output += `${this.indent()}}`;
+    return output;
+  }
+
   emitWhileStatement(node) {
     const test = this.emit(node.test);
     const body = this.emit(node.body);
@@ -201,7 +350,6 @@ export class RustEmitter {
   }
 
   emitForStatement(node) {
-    // Check if it matches: for (let i = start; i < end; i++) or <=
     const isStandardRange =
       node.init &&
       node.init.type === 'VariableDeclaration' &&
@@ -223,7 +371,6 @@ export class RustEmitter {
       return `${this.indent()}for ${varName} in ${start}${rangeOp}${end} ${body}`;
     }
 
-    // Fallback: transpile to standard loop or while
     const init = node.init ? `${this.emit(node.init)}\n` : '';
     const test = node.test ? this.emit(node.test) : 'true';
     const update = node.update ? `\n${this.withIndent(() => this.indent() + this.emit(node.update) + ';')}` : '';
@@ -260,7 +407,7 @@ export class RustEmitter {
   }
 
   emitCallExpression(node) {
-    // Check for console.log
+    // 1. console.log(...) -> println!(...)
     if (
       node.callee.type === 'MemberExpression' &&
       node.callee.object.name === 'console' &&
@@ -269,36 +416,61 @@ export class RustEmitter {
       if (node.arguments.length === 1) {
         return `println!("{:?}", ${this.emit(node.arguments[0])})`;
       }
-      const placeholders = node.arguments.map(() => '{}').join(' ');
+      const placeholders = node.arguments.map(() => '{:?}').join(' ');
       const args = node.arguments.map((a) => this.emit(a)).join(', ');
       return `println!("${placeholders}", ${args})`;
     }
 
-    // Check for Math.* built-ins
+    // 2. Math.* built-ins
     if (
       node.callee.type === 'MemberExpression' &&
       node.callee.object.name === 'Math'
     ) {
       const method = node.callee.property.name;
       const args = node.arguments.map((a) => this.emit(a));
-      if (method === 'floor') return `(${args[0]} as i64)`;
-      if (method === 'sqrt') return `(${args[0]} as f64).sqrt()`;
-      if (method === 'abs') return `(${args[0]}).abs()`;
-      if (method === 'pow') return `(${args[0]} as f64).powf(${args[1]} as f64)`;
+      if (method === 'floor') return `((${args[0]}) as i64)`;
+      if (method === 'sqrt') return `((${args[0]}) as f64).sqrt()`;
+      if (method === 'abs') return `((${args[0]})).abs()`;
+      if (method === 'pow') return `((${args[0]}) as f64).powf((${args[1]}) as f64)`;
       if (method === 'max') return `std::cmp::max(${args[0]}, ${args[1]})`;
       if (method === 'min') return `std::cmp::min(${args[0]}, ${args[1]})`;
     }
 
+    // 3. Array methods: .push(), .pop(), .includes()
+    if (node.callee.type === 'MemberExpression') {
+      const obj = this.emit(node.callee.object);
+      const method = node.callee.property.name;
+
+      if (method === 'push') {
+        const val = this.emit(node.arguments[0]);
+        return `${obj}.push(${val})`;
+      }
+      if (method === 'pop') {
+        return `${obj}.pop()`;
+      }
+      if (method === 'includes') {
+        const val = this.emit(node.arguments[0]);
+        return `${obj}.contains(&${val})`;
+      }
+    }
+
+    // 4. User function call with Auto-Borrowing & Mut-Borrowing
     const callee = this.emit(node.callee);
     const fnName = node.callee.name;
-    const expectedParamTypes = this.signatures.get(fnName);
+    const expectedParamInfos = this.signatures.get(fnName);
 
     const args = node.arguments.map((arg, idx) => {
       let code = this.emit(arg);
-      // Auto-borrow slices if target expects &[T]
-      if (expectedParamTypes && expectedParamTypes[idx]?.startsWith('&[')) {
-        if (!code.startsWith('&')) {
-          code = `&${code}`;
+      if (expectedParamInfos && expectedParamInfos[idx]) {
+        const target = expectedParamInfos[idx];
+        if (target.isMut) {
+          if (!code.startsWith('&mut ')) {
+            code = `&mut ${code}`;
+          }
+        } else if (target.isStruct || target.type.startsWith('&[')) {
+          if (!code.startsWith('&')) {
+            code = `&${code}`;
+          }
         }
       }
       return code;
@@ -310,7 +482,7 @@ export class RustEmitter {
   emitMemberExpression(node) {
     const obj = this.emit(node.object);
 
-    // Array / String .length -> .len()
+    // Array / String .length -> (obj.len() as i64)
     if (!node.computed && node.property.name === 'length') {
       return `(${obj}.len() as i64)`;
     }
@@ -322,5 +494,51 @@ export class RustEmitter {
     }
 
     return `${obj}.${this.emit(node.property)}`;
+  }
+
+  emitObjectExpression(node) {
+    // Guess struct name if available
+    for (const [name, props] of this.structs.entries()) {
+      const propMap = new Map(props.map((p) => [p.name, p.type]));
+      const objKeys = node.properties.map((p) => p.key.name || p.key.value);
+      if (objKeys.length === props.length && objKeys.every((k) => propMap.has(k))) {
+        const fields = node.properties.map((p) => {
+          const key = p.key.name || p.key.value;
+          let val = this.emit(p.value);
+          const expectedType = propMap.get(key);
+          if ((expectedType === 'f64' || expectedType === 'f32') && !val.includes('.') && /^\d+$/.test(val)) {
+            val = `${val}.0`;
+          }
+          return `${key}: ${val}`;
+        }).join(', ');
+        return `${name} { ${fields} }`;
+      }
+    }
+
+    const fields = node.properties.map((p) => {
+      const key = p.key.name || p.key.value;
+      const val = this.emit(p.value);
+      return `${key}: ${val}`;
+    }).join(', ');
+
+    return `{ ${fields} }`;
+  }
+
+  emitTemplateLiteral(node) {
+    let formatStr = '';
+    const expressions = node.expressions.map((e) => this.emit(e));
+
+    for (let i = 0; i < node.quasis.length; i++) {
+      formatStr += node.quasis[i].value.raw;
+      if (i < expressions.length) {
+        formatStr += '{}';
+      }
+    }
+
+    if (expressions.length === 0) {
+      return `"${formatStr}".to_string()`;
+    }
+
+    return `format!("${formatStr}", ${expressions.join(', ')})`;
   }
 }

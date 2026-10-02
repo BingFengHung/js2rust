@@ -12,7 +12,7 @@ import { RustEmitter } from './codegen.js';
  * @returns {string} - The resulting Rust source code.
  */
 export function transpile(jsCode, options = {}) {
-  // Parse JavaScript with Babel, preserving comments (needed for JSDoc)
+  // Parse JavaScript with Babel, preserving all comments (needed for JSDoc & typedefs)
   const ast = parse(jsCode, {
     sourceType: 'module',
     allowReturnOutsideFunction: true,
@@ -23,7 +23,7 @@ export function transpile(jsCode, options = {}) {
   });
 
   const emitter = new RustEmitter(options);
-  const rustCode = emitter.emit(ast.program);
+  const rustCode = emitter.emitProgramWithAst(ast);
 
   return rustCode.trim() + '\n';
 }

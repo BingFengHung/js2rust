@@ -22,7 +22,7 @@ export const RUST_TYPE_MAP = {
   'string': '&str',
   'String': 'String',
 
-  // Arrays
+  // Arrays (immutable defaults)
   'number[]': '&[f64]',
   'int[]': '&[i64]',
   'i64[]': '&[i64]',
@@ -39,10 +39,11 @@ export const RUST_TYPE_MAP = {
  * Maps a JSDoc or inferred type string to a Rust type.
  * @param {string} jsType
  * @param {boolean} isReturn - whether this type is for a return position
+ * @param {boolean} isMut - whether this parameter is mutated (requires &mut)
  * @returns {string}
  */
-export function mapToRustType(jsType, isReturn = false) {
-  if (!jsType) return 'f64'; // Default to f64 for numerical algorithms
+export function mapToRustType(jsType, isReturn = false, isMut = false) {
+  if (!jsType) return isMut ? '&mut f64' : 'f64';
 
   const trimmed = jsType.trim();
 
@@ -50,45 +51,79 @@ export function mapToRustType(jsType, isReturn = false) {
   if (isReturn) {
     if (trimmed === 'number[]' || trimmed === 'Array<number>') return 'Vec<f64>';
     if (trimmed === 'int[]' || trimmed === 'i64[]' || trimmed === 'Array<int>') return 'Vec<i64>';
-    if (trimmed === 'string') return 'String';
+    if (trimmed === 'string') return "&'static str";
+  }
+
+  // If mutated array parameter, convert to &mut [T] or &mut Vec<T>
+  if (isMut) {
+    if (trimmed === 'int[]' || trimmed === 'i64[]' || trimmed === 'Array<int>') return '&mut [i64]';
+    if (trimmed === 'number[]' || trimmed === 'Array<number>') return '&mut [f64]';
+    if (trimmed === 'string[]') return '&mut Vec<String>';
   }
 
   return RUST_TYPE_MAP[trimmed] || trimmed;
 }
 
 /**
- * Extracts JSDoc @param and @returns tags from AST leading comments.
+ * Extracts JSDoc @typedef, @property, @param, and @returns tags from AST leading comments.
+ * Merges across ALL attached comments.
  * @param {Array} leadingComments
- * @returns {{ params: Record<string, string>, returns: string | null }}
+ * @returns {{
+ *   params: Record<string, string>,
+ *   returns: string | null,
+ *   typedef: { name: string, properties: Array<{ name: string, type: string }> } | null
+ * }}
  */
 export function parseJSDoc(leadingComments) {
   const result = {
     params: {},
     returns: null,
+    typedef: null,
   };
 
   if (!leadingComments || leadingComments.length === 0) {
     return result;
   }
 
-  const jsdocComment = leadingComments.find(
-    (c) => c.type === 'CommentBlock' && c.value.startsWith('*')
-  );
-
-  if (!jsdocComment) {
-    return result;
-  }
-
-  const lines = jsdocComment.value.split('\n');
-  for (const line of lines) {
-    const paramMatch = line.match(/@param\s+\{([^}]+)\}\s+([a-zA-Z0-9_$]+)/);
-    if (paramMatch) {
-      result.params[paramMatch[2]] = paramMatch[1].trim();
+  for (const jsdocComment of leadingComments) {
+    if (jsdocComment.type !== 'CommentBlock' || !jsdocComment.value.startsWith('*')) {
+      continue;
     }
 
-    const returnMatch = line.match(/@returns?\s+\{([^}]+)\}/);
-    if (returnMatch) {
-      result.returns = returnMatch[1].trim();
+    const lines = jsdocComment.value.split('\n');
+    let currentTypedef = null;
+
+    for (const line of lines) {
+      // 1. @typedef {Object} StructName
+      const typedefMatch = line.match(/@typedef\s+\{([^}]+)\}\s+([a-zA-Z0-9_$]+)/);
+      if (typedefMatch) {
+        currentTypedef = {
+          name: typedefMatch[2],
+          properties: [],
+        };
+        result.typedef = currentTypedef;
+      }
+
+      // 2. @property {type} propName
+      const propMatch = line.match(/@property\s+\{([^}]+)\}\s+([a-zA-Z0-9_$]+)/);
+      if (propMatch && currentTypedef) {
+        currentTypedef.properties.push({
+          name: propMatch[2],
+          type: mapToRustType(propMatch[1].trim()),
+        });
+      }
+
+      // 3. @param {type} paramName
+      const paramMatch = line.match(/@param\s+\{([^}]+)\}\s+([a-zA-Z0-9_$]+)/);
+      if (paramMatch) {
+        result.params[paramMatch[2]] = paramMatch[1].trim();
+      }
+
+      // 4. @returns {type}
+      const returnMatch = line.match(/@returns?\s+\{([^}]+)\}/);
+      if (returnMatch) {
+        result.returns = returnMatch[1].trim();
+      }
     }
   }
 
