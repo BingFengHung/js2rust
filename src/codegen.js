@@ -20,6 +20,7 @@ export class RustEmitter {
     this.classes = new Set();
     this.classMutatingMethods = new Set();
     this.mutatedVars = new Set();
+    this.enums = new Set();
   }
 
   formatIdentifier(name) {
@@ -109,6 +110,10 @@ export class RustEmitter {
             this.classMutatingMethods.add(method.key.name);
           }
         }
+      }
+
+      if (stmt.type === 'TSEnumDeclaration') {
+        this.enums.add(stmt.id.name);
       }
     }
   }
@@ -306,6 +311,9 @@ export class RustEmitter {
 
       case 'ClassDeclaration':
         return this.emitClassDeclaration(node);
+
+      case 'TSEnumDeclaration':
+        return this.emitTSEnumDeclaration(node);
 
       case 'ImportDeclaration':
         return this.emitImportDeclaration(node);
@@ -602,6 +610,19 @@ export class RustEmitter {
     return `${callee}::new(${args})`;
   }
 
+  emitTSEnumDeclaration(node) {
+    const enumName = node.id.name;
+    this.enums.add(enumName);
+    let code = `${this.indent()}#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n${this.indent()}pub enum ${enumName} {\n`;
+    this.withIndent(() => {
+      for (const member of node.members) {
+        code += `${this.indent()}${member.id.name},\n`;
+      }
+    });
+    code += `${this.indent()}}\n`;
+    return code;
+  }
+
   emitClosure(node, isMove = true) {
     const params = node.params.map((p) => p.name || this.emit(p)).join(', ');
     const movePrefix = isMove ? 'move ' : '';
@@ -693,7 +714,8 @@ export class RustEmitter {
 
     const visibility = isMain ? '' : 'pub ';
     const asyncPrefix = isAsync ? 'async ' : '';
-    const header = `${this.indent()}${tokioAttribute}${visibility}${asyncPrefix}fn ${fnName}(${params})${returnClause} `;
+    const lifetimeClause = jsdoc.lifetime ? `<${jsdoc.lifetime}>` : '';
+    const header = `${this.indent()}${tokioAttribute}${visibility}${asyncPrefix}fn ${fnName}${lifetimeClause}(${params})${returnClause} `;
     const body = this.emit(node.body);
 
     return header + body;
@@ -855,6 +877,14 @@ export class RustEmitter {
       return `println!("${placeholders}", ${args})`;
     }
 
+    // Unsafe block: unsafe(() => { ... })
+    if (node.callee.type === 'Identifier' && node.callee.name === 'unsafe') {
+      const fnArg = node.arguments[0];
+      if (fnArg && (fnArg.type === 'ArrowFunctionExpression' || fnArg.type === 'FunctionExpression')) {
+        return `unsafe ${this.emit(fnArg.body)}`;
+      }
+    }
+
     // 2. Math.* built-ins
     if (
       node.callee.type === 'MemberExpression' &&
@@ -973,6 +1003,16 @@ export class RustEmitter {
   }
 
   emitMemberExpression(node) {
+    // Enum access: Direction.North -> Direction::North
+    if (
+      !node.computed &&
+      node.object.type === 'Identifier' &&
+      this.enums &&
+      this.enums.has(node.object.name)
+    ) {
+      return `${node.object.name}::${node.property.name}`;
+    }
+
     const obj = this.emit(node.object);
 
     // Array / String .length -> (obj.len() as i64)

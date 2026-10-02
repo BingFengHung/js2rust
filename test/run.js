@@ -201,6 +201,69 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('acc.deposit(50);'), 'Calls acc.deposit(50)');
 }
 
+// Test 10: Unsafe block transpilation (unsafe(() => { ... }))
+{
+  const js = `
+  function main() {
+    let x = 42;
+    unsafe(() => {
+      console.log("Accessing unsafe block:", x);
+    });
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('unsafe {'), 'Emits unsafe { ... } block');
+  assert(rust.includes('println!("{:?} {:?}", "Accessing unsafe block:", x);'), 'Executes inside unsafe block');
+}
+
+// Test 11: TypeScript / Rust Enum transpilation (enum Direction)
+{
+  const js = `
+  enum Direction {
+    North,
+    South,
+    East,
+    West
+  }
+
+  function main() {
+    let dir = Direction.North;
+    switch (dir) {
+      case Direction.North:
+        console.log("Heading North!");
+        break;
+      default:
+        console.log("Other direction");
+    }
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub enum Direction {'), 'Emits pub enum Direction');
+  assert(rust.includes('North,'), 'Contains enum variant North');
+  assert(rust.includes('Direction::North'), 'Translates Direction.North to Direction::North');
+  assert(rust.includes('match dir {'), 'Translates switch to match');
+}
+
+// Test 12: Explicit Lifetime Annotations (@lifetime 'a)
+{
+  const js = `
+  /**
+   * @lifetime 'a
+   * @param {&'a str} x
+   * @param {&'a str} y
+   * @returns {&'a str}
+   */
+  function longest(x, y) {
+    if (x.length > y.length) {
+      return x;
+    }
+    return y;
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes("pub fn longest<'a>(x: &'a str, y: &'a str) -> &'a str"), "Emits pub fn longest<'a> with lifetime parameter");
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);

@@ -79,6 +79,7 @@ export function parseJSDoc(leadingComments) {
     params: {},
     returns: null,
     typedef: null,
+    lifetime: null,
   };
 
   if (!leadingComments || leadingComments.length === 0) {
@@ -123,6 +124,12 @@ export function parseJSDoc(leadingComments) {
       const returnMatch = line.match(/@returns?\s+\{([^}]+)\}/);
       if (returnMatch) {
         result.returns = returnMatch[1].trim();
+      }
+
+      // 5. @lifetime 'a or @lifetime 'a, 'b
+      const lifetimeMatch = line.match(/@lifetime\s+([^\n\r]+)/);
+      if (lifetimeMatch) {
+        result.lifetime = lifetimeMatch[1].trim();
       }
     }
   }

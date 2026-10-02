@@ -20,6 +20,7 @@ export function transpile(jsCode, options = {}) {
     plugins: [
       'classProperties',
       'numericSeparator',
+      'typescript',
     ],
   });
 
