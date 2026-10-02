@@ -4,7 +4,7 @@
 
 import { parse } from '@babel/parser';
 import { RustEmitter } from './codegen.js';
-import { transpileMultiModules } from './modules.js';
+import { transpileMultiModules, generateRustProject } from './modules.js';
 
 /**
  * Transpiles JavaScript source code to Rust source code.
@@ -29,5 +29,5 @@ export function transpile(jsCode, options = {}) {
   return rustCode.trim() + '\n';
 }
 
-export { transpileMultiModules };
+export { transpileMultiModules, generateRustProject };
 export default transpile;

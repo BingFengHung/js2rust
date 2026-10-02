@@ -2,7 +2,7 @@
  * Automated Test Runner for js-to-rust
  */
 
-import { transpile, transpileMultiModules } from '../src/index.js';
+import { transpile, transpileMultiModules, generateRustProject } from '../src/index.js';
 
 let passed = 0;
 let failed = 0;
@@ -65,6 +65,16 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('pub mod math {'), 'Creates nested module pub mod math');
   assert(rust.includes('use utils::math::add;'), 'Translates nested import to use utils::math::add;');
   assert(rust.includes('fn main()'), 'Includes main function');
+
+  // Test 4: generateRustProject generates multi-file Cargo project structure
+  const project = generateRustProject(files);
+  assert(Boolean(project['Cargo.toml']), 'Generates Cargo.toml');
+  assert(Boolean(project['src/main.rs']), 'Generates src/main.rs');
+  assert(Boolean(project['src/utils/mod.rs']), 'Generates src/utils/mod.rs');
+  assert(Boolean(project['src/utils/math.rs']), 'Generates src/utils/math.rs');
+  assert(project['src/main.rs'].includes('mod utils;'), 'src/main.rs declares mod utils;');
+  assert(project['src/utils/mod.rs'].includes('pub mod math;'), 'src/utils/mod.rs declares pub mod math;');
+  assert(project['src/utils/math.rs'].includes('pub fn add'), 'src/utils/math.rs contains compiled add function');
 }
 
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);

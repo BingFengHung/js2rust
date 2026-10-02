@@ -6,7 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { transpile, transpileMultiModules } from '../src/index.js';
+import { transpile, transpileMultiModules, generateRustProject } from '../src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,13 +32,19 @@ const server = http.createServer(async (req, res) => {
       try {
         const payload = JSON.parse(body);
         let rust = '';
+        let projectFiles = {};
         if (payload.files && typeof payload.files === 'object') {
           rust = transpileMultiModules(payload.files);
+          projectFiles = generateRustProject(payload.files);
         } else {
           rust = transpile(payload.code || '');
+          projectFiles = {
+            'Cargo.toml': `[package]\nname = "js2rust_app"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n`,
+            'src/main.rs': rust
+          };
         }
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ rust }));
+        res.end(JSON.stringify({ rust, projectFiles }));
       } catch (err) {
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ error: err.message }));

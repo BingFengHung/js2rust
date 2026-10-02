@@ -4,18 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>js-to-rust Playground 🦀</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
-
-  <!-- CodeMirror 5: Syntax Highlighting, Smart Indent, Smart Tab -->
+  <!-- CodeMirror 5: Syntax Highlighting for JS, Rust, TOML -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/rust/rust.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/toml/toml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+  <!-- JSZip for Cargo Project Export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     :root {
       --bg-dark: #12141a;
@@ -407,22 +406,122 @@
       overflow: hidden;
     }
 
-    .rust-preview {
-      background: var(--bg-editor);
-      overflow: auto;
-      position: relative;
-      padding: 0;
+    .rust-view-toggle {
+      display: inline-flex;
+      background: #101216;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 2px;
+      gap: 2px;
     }
 
-    pre#rustCode {
-      margin: 0;
-      padding: 16px;
-      background: transparent !important;
+    .rust-toggle-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.74rem;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .rust-toggle-btn:hover {
+      color: var(--text-main);
+    }
+
+    .rust-toggle-btn.active {
+      background: #21262d;
+      color: #58a6ff;
+      font-weight: 600;
+    }
+
+    .btn-sm {
+      background: #21262d;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .btn-sm:hover {
+      background: #30363d;
+      border-color: var(--accent-rust);
+      color: #fff;
+    }
+
+    .rust-files-bar {
+      background: #14171f;
+      border-bottom: 1px solid var(--border-color);
+      padding: 6px 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      white-space: nowrap;
+      min-height: 40px;
+    }
+
+    .rust-files-bar::-webkit-scrollbar {
+      height: 4px;
+    }
+
+    .rust-files-bar::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 2px;
+    }
+
+    .rust-file-chip {
+      background: #1c2128;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      font-family: "Fira Code", Consolas, monospace;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+
+    .rust-file-chip:hover {
+      border-color: var(--accent-blue);
+      color: var(--text-main);
+      background: #22272e;
+    }
+
+    .rust-file-chip.active {
+      background: #21262d;
+      border-color: var(--accent-rust);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 0 0 1px var(--accent-rust);
+    }
+
+    .rust-editor-container {
+      flex: 1;
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .rust-editor-container .CodeMirror {
+      height: 100%;
       font-family: "Fira Code", "Cascadia Code", Consolas, Monaco, monospace;
       font-size: 13.5px;
-      line-height: 1.6;
-      height: 100%;
-      overflow: auto;
+      background: var(--bg-editor);
     }
 
     .terminal-panel {
@@ -621,6 +720,7 @@
     <div class="actions">
       <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">範本：</label>
       <select id="templateSelect">
+        <option value="" disabled selected>📂 載入範本專案...</option>
         <option value="nested">📂 巢狀資料夾架構 (src/utils/math.js)</option>
         <option value="modules">📦 基本模組架構 (src/math.js)</option>
         <option value="inference">🧠 免註解型別推導 (Type Inference)</option>
@@ -676,14 +776,28 @@
     <div class="panel">
       <div class="right-split">
         <!-- Rust Code View -->
-        <div style="display: flex; flex-direction: column; overflow: hidden;">
-          <div class="panel-header">
-            <span>轉譯產生的 Rust 模組樹與主程式</span>
-            <span id="transpileStatus" style="font-size: 0.75rem; color: #3fb950;">轉譯完成</span>
+        <div style="display: flex; flex-direction: column; overflow: hidden; height: 100%;">
+          <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-weight: 600;">🦀 Rust 成果</span>
+              <div class="rust-view-toggle">
+                <button id="viewModeFilesBtn" class="rust-toggle-btn active" title="標準 Cargo 多檔案與資料夾結構">📁 專案資料夾結構</button>
+                <button id="viewModeMergedBtn" class="rust-toggle-btn" title="打包為單一檔案以供 Rust Playground 線上執行">⚡ 線上執行整合檔</button>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <button id="downloadZipBtn" class="btn-sm" title="下載完整 Cargo 專案 (包含 Cargo.toml 與 src 資料夾結構)">📦 下載 Cargo 專案 (.zip)</button>
+              <span id="transpileStatus" style="font-size: 0.75rem; color: #3fb950;">轉譯完成</span>
+            </div>
           </div>
-          <div class="rust-preview">
-            <pre><code id="rustCode" class="language-rust"></code></pre>
+
+          <!-- Rust File & Folder Navigation Bar -->
+          <div id="rustFilesBar" class="rust-files-bar">
+            <!-- Dynamically populated file chips -->
           </div>
+
+          <!-- Rust Code Editor Container -->
+          <div id="rustEditorContainer" class="rust-editor-container"></div>
         </div>
 
         <!-- Terminal Output -->
@@ -818,6 +932,18 @@ function main() {
       }
     };
 
+    // State Variables
+    let currentTemplate = TEMPLATES.nested;
+    let folders = new Set(currentTemplate.folders);
+    let files = JSON.parse(JSON.stringify(currentTemplate.files));
+    let collapsedFolders = new Set();
+    let activeFile = 'src/main.js';
+    let currentRustCode = '';
+    let currentProjectFiles = {};
+    let currentRustViewMode = 'files'; // 'files' | 'merged'
+    let activeRustFile = 'src/main.rs';
+    let debounceTimer = null;
+
     // Elements
     const treeView = document.getElementById('treeView');
     const activeFilePath = document.getElementById('activeFilePath');
@@ -826,7 +952,6 @@ function main() {
     const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
     const mainContainer = document.querySelector('main');
     const jsInput = document.getElementById('jsInput');
-    const rustCode = document.getElementById('rustCode');
     const transpileStatus = document.getElementById('transpileStatus');
     const templateSelect = document.getElementById('templateSelect');
     const runBtn = document.getElementById('runBtn');
@@ -834,6 +959,13 @@ function main() {
     const copyBtn = document.getElementById('copyBtn');
     const execBadge = document.getElementById('execBadge');
     const terminalOutput = document.getElementById('terminalOutput');
+
+    // Rust View Elements
+    const viewModeFilesBtn = document.getElementById('viewModeFilesBtn');
+    const viewModeMergedBtn = document.getElementById('viewModeMergedBtn');
+    const downloadZipBtn = document.getElementById('downloadZipBtn');
+    const rustFilesBar = document.getElementById('rustFilesBar');
+    const rustEditorContainer = document.getElementById('rustEditorContainer');
 
     // Import / Export Elements
     const importBtn = document.getElementById('importBtn');
@@ -845,6 +977,159 @@ function main() {
     const folderInput = document.getElementById('folderInput');
     const projectFileInput = document.getElementById('projectFileInput');
     const toast = document.getElementById('toast');
+
+    // Initialize CodeMirror 5 Editor with Live Highlight, Smart Tab & Smart Newlines
+    const cmEditor = CodeMirror.fromTextArea(jsInput, {
+      mode: 'javascript',
+      theme: 'material-darker',
+      lineNumbers: true,
+      tabSize: 2,
+      indentUnit: 2,
+      indentWithTabs: false, // 智慧 Tab: 自動將 Tab 轉換為 2 個空白 (Space)
+      smartIndent: true,     // 智慧換行: Enter 自動對齊上一層縮排與大括號
+      autoCloseBrackets: true,
+      matchBrackets: true,
+      lineWrapping: false,
+      extraKeys: {
+        "Tab": function(cm) {
+          if (cm.somethingSelected()) {
+            cm.indentSelection("add");
+          } else {
+            cm.replaceSelection("  ", "end"); // 嚴格 2 個空白
+          }
+        },
+        "Shift-Tab": function(cm) {
+          cm.indentSelection("subtract");
+        },
+        "Ctrl-Enter": function() {
+          runRustCode();
+        },
+        "Cmd-Enter": function() {
+          runRustCode();
+        }
+      }
+    });
+
+    // Initialize CodeMirror 5 Editor for Rust with Full Syntax Highlighting & Line Numbers
+    const cmRustEditor = CodeMirror(rustEditorContainer, {
+      mode: 'rust',
+      theme: 'material-darker',
+      lineNumbers: true,
+      readOnly: true,
+      matchBrackets: true,
+      lineWrapping: false,
+      extraKeys: {
+        "Ctrl-Enter": function() {
+          runRustCode();
+        },
+        "Cmd-Enter": function() {
+          runRustCode();
+        }
+      }
+    });
+
+    // CodeMirror change event
+    cmEditor.on('change', () => {
+      files[activeFile] = cmEditor.getValue();
+      saveToLocalStorage();
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(doTranspile, 250);
+    });
+
+    // Update Rust View UI (Files vs Merged, Chips, Content, Syntax Mode)
+    function updateRustView() {
+      if (!viewModeFilesBtn || !viewModeMergedBtn) return;
+      viewModeFilesBtn.classList.toggle('active', currentRustViewMode === 'files');
+      viewModeMergedBtn.classList.toggle('active', currentRustViewMode === 'merged');
+
+      if (currentRustViewMode === 'files') {
+        const fileKeys = Object.keys(currentProjectFiles);
+        if (fileKeys.length === 0) {
+          rustFilesBar.innerHTML = '<span style="font-size:0.75rem; color:#8b949e;">尚無生成的專案檔案</span>';
+          cmRustEditor.setValue('// 尚未生成 Rust 檔案');
+          return;
+        }
+
+        // Ensure activeRustFile is valid
+        if (!currentProjectFiles[activeRustFile]) {
+          activeRustFile = currentProjectFiles['src/main.rs'] ? 'src/main.rs' : fileKeys[0];
+        }
+
+        // Render file chips in rustFilesBar
+        rustFilesBar.innerHTML = '';
+        const sortedPaths = fileKeys.slice().sort((a, b) => {
+          if (a === 'Cargo.toml') return -1;
+          if (b === 'Cargo.toml') return 1;
+          if (a === 'src/main.rs') return -1;
+          if (b === 'src/main.rs') return 1;
+          return a.localeCompare(b);
+        });
+
+        sortedPaths.forEach((path) => {
+          const chip = document.createElement('div');
+          chip.className = `rust-file-chip ${path === activeRustFile ? 'active' : ''}`;
+          const icon = path === 'Cargo.toml' ? '⚙️' : (path.endsWith('mod.rs') ? '📁' : '🦀');
+          chip.innerHTML = `<span>${icon}</span><span>${path}</span>`;
+          chip.onclick = () => {
+            activeRustFile = path;
+            updateRustView();
+          };
+          rustFilesBar.appendChild(chip);
+        });
+
+        // Set syntax mode: toml for Cargo.toml, rust for .rs
+        const isToml = activeRustFile.endsWith('.toml');
+        cmRustEditor.setOption('mode', isToml ? 'toml' : 'rust');
+        cmRustEditor.setValue(currentProjectFiles[activeRustFile] || '');
+      } else {
+        // Merged View
+        rustFilesBar.innerHTML = `
+          <div style="display:flex; align-items:center; gap:8px; font-size:0.76rem; color:#8b949e; overflow:hidden; text-overflow:ellipsis;">
+            <span style="color:#58a6ff; font-weight:600;">⚡ 線上執行整合檔 (All-in-One main.rs)</span>
+            <span>— 已將所有模組內聯為單一執行檔，可直接點擊「在線編譯並執行 Rust」！</span>
+          </div>
+        `;
+        cmRustEditor.setOption('mode', 'rust');
+        cmRustEditor.setValue(currentRustCode || '');
+      }
+    }
+
+    viewModeFilesBtn.addEventListener('click', () => {
+      currentRustViewMode = 'files';
+      updateRustView();
+    });
+
+    viewModeMergedBtn.addEventListener('click', () => {
+      currentRustViewMode = 'merged';
+      updateRustView();
+    });
+
+    downloadZipBtn.addEventListener('click', async () => {
+      if (!currentProjectFiles || Object.keys(currentProjectFiles).length === 0) {
+        showToast('目前沒有可下載的 Rust 檔案');
+        return;
+      }
+
+      try {
+        const zip = new JSZip();
+        for (const [filePath, content] of Object.entries(currentProjectFiles)) {
+          zip.file(filePath, content);
+        }
+
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `rust-cargo-project-${Date.now()}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Rust Cargo 專案已打包為 ZIP 並開始下載！');
+      } catch (err) {
+        alert('打包 ZIP 失敗: ' + err.message);
+      }
+    });
 
     function showToast(msg) {
       toast.textContent = msg;
@@ -1107,7 +1392,8 @@ function main() {
                 }
                 renderTree();
                 activeFilePath.textContent = activeFile;
-                jsInput.value = files[activeFile] || '';
+                cmEditor.setValue(files[activeFile] || '');
+                cmEditor.clearHistory();
                 doTranspile();
               }
             };
@@ -1178,6 +1464,14 @@ function main() {
             cmEditor.setValue(files[activeFile] || '');
             cmEditor.clearHistory();
             doTranspile();
+
+            // Auto-sync matching Rust file if in files view
+            const norm = node.path.replace(/^\.\//, '').replace(/^src\//, '').replace(/\.(js|ts|mjs)$/, '');
+            const targetRs = (norm === 'main' || norm === '') ? 'src/main.rs' : `src/${norm}.rs`;
+            if (currentProjectFiles[targetRs]) {
+              activeRustFile = targetRs;
+              updateRustView();
+            }
           };
 
           treeView.appendChild(fileDiv);
@@ -1241,7 +1535,7 @@ function main() {
         currentTemplate = TEMPLATES[sel];
         folders = new Set(currentTemplate.folders);
         files = JSON.parse(JSON.stringify(currentTemplate.files));
-        activeFile = Object.keys(files)[0] || 'src/main.js';
+        activeFile = files['src/main.js'] ? 'src/main.js' : Object.keys(files)[0];
         saveToLocalStorage();
         renderTree();
         activeFilePath.textContent = activeFile;
@@ -1250,46 +1544,7 @@ function main() {
         doTranspile();
         showToast('已載入範本專案');
       }
-    });
-
-    // Initialize CodeMirror 5 Editor with Live Highlight, Smart Tab & Smart Newlines
-    const cmEditor = CodeMirror.fromTextArea(document.getElementById('jsInput'), {
-      mode: 'javascript',
-      theme: 'material-darker',
-      lineNumbers: true,
-      tabSize: 2,
-      indentUnit: 2,
-      indentWithTabs: false, // 智慧 Tab: 自動將 Tab 轉換為 2 個空白 (Space)
-      smartIndent: true,     // 智慧換行: Enter 自動對齊上一層縮排與大括號
-      autoCloseBrackets: true,
-      matchBrackets: true,
-      lineWrapping: false,
-      extraKeys: {
-        "Tab": function(cm) {
-          if (cm.somethingSelected()) {
-            cm.indentSelection("add");
-          } else {
-            cm.replaceSelection("  ", "end"); // 嚴格 2 個空白
-          }
-        },
-        "Shift-Tab": function(cm) {
-          cm.indentSelection("subtract");
-        },
-        "Ctrl-Enter": function() {
-          runRustCode();
-        },
-        "Cmd-Enter": function() {
-          runRustCode();
-        }
-      }
-    });
-
-    // CodeMirror change event
-    cmEditor.on('change', () => {
-      files[activeFile] = cmEditor.getValue();
-      saveToLocalStorage();
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(doTranspile, 250);
+      templateSelect.value = '';
     });
 
     // Transpile all files into Rust
@@ -1308,13 +1563,15 @@ function main() {
         if (data.error) {
           transpileStatus.textContent = '轉譯語法錯誤';
           transpileStatus.style.color = '#f85149';
-          rustCode.textContent = `// 轉譯錯誤:\n// ${data.error}`;
+          currentRustCode = `// 轉譯錯誤:\n// ${data.error}`;
+          currentProjectFiles = { 'src/main.rs': currentRustCode };
+          updateRustView();
         } else {
-          currentRustCode = data.rust;
-          rustCode.textContent = data.rust;
+          currentRustCode = data.rust || '';
+          currentProjectFiles = data.projectFiles || {};
           transpileStatus.textContent = '轉譯完成';
           transpileStatus.style.color = '#3fb950';
-          hljs.highlightElement(rustCode);
+          updateRustView();
         }
       } catch (err) {
         transpileStatus.textContent = '連線失敗';
@@ -1383,8 +1640,12 @@ function main() {
     runBtn.addEventListener('click', runRustCode);
 
     copyBtn.addEventListener('click', () => {
-      if (!currentRustCode) return;
-      navigator.clipboard.writeText(currentRustCode).then(() => {
+      const codeToCopy = (currentRustViewMode === 'files' && currentProjectFiles[activeRustFile])
+        ? currentProjectFiles[activeRustFile]
+        : currentRustCode;
+
+      if (!codeToCopy) return;
+      navigator.clipboard.writeText(codeToCopy).then(() => {
         const originalText = copyBtn.textContent;
         copyBtn.textContent = '✓ 已複製！';
         setTimeout(() => { copyBtn.textContent = originalText; }, 1500);

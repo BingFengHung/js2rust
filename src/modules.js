@@ -116,3 +116,93 @@ export function transpileMultiModules(files, options = {}) {
 
   return finalOutput.trim() + '\n';
 }
+
+/**
+ * Generates a full multi-file Rust Cargo project structure.
+ * Returns a dictionary mapping relative file paths to their Rust source content:
+ * e.g. {
+ *   "Cargo.toml": "...",
+ *   "src/main.rs": "...",
+ *   "src/utils/mod.rs": "...",
+ *   "src/utils/math.rs": "..."
+ * }
+ * @param {Record<string, string>} files - Map of filename/path to JS source code.
+ * @param {object} [options] - Compiler options.
+ * @returns {Record<string, string>} - Map of file paths to generated file contents.
+ */
+export function generateRustProject(files, options = {}) {
+  const filenames = Object.keys(files);
+  if (filenames.length === 0) {
+    return {};
+  }
+
+  const project = {};
+
+  // 1. Cargo.toml
+  project['Cargo.toml'] = `[package]
+name = "js2rust_app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+`;
+
+  const mainFilename = findMainFilename(files);
+
+  // Collect top-level modules and nested folder module structure
+  // folderDeclarations: Map<folderPath, Set<childModName>>
+  const folderDeclarations = new Map();
+  const topLevelMods = new Set();
+
+  for (const rawPath of filenames) {
+    if (rawPath === mainFilename) continue;
+
+    const norm = normalizePath(rawPath);
+    const parts = norm
+      .replace(/\.(js|ts|mjs)$/, '')
+      .split('/')
+      .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
+
+    const code = files[rawPath];
+    const compiledCode = transpile(code, options);
+
+    // rustFilePath: e.g. 'src/utils/math.rs'
+    const rustFilePath = `src/${parts.join('/')}.rs`;
+    project[rustFilePath] = compiledCode;
+
+    // Track top-level module
+    topLevelMods.add(parts[0]);
+
+    // Track parent folder mod.rs declarations
+    for (let i = 0; i < parts.length - 1; i++) {
+      const folderPath = `src/${parts.slice(0, i + 1).join('/')}`;
+      const childMod = parts[i + 1];
+      if (!folderDeclarations.has(folderPath)) {
+        folderDeclarations.set(folderPath, new Set());
+      }
+      folderDeclarations.get(folderPath).add(childMod);
+    }
+  }
+
+  // 2. Generate mod.rs for each folder that contains submodules
+  for (const [folderPath, submodules] of folderDeclarations.entries()) {
+    const modRsPath = `${folderPath}/mod.rs`;
+    const sortedMods = Array.from(submodules).sort();
+    const modContent = sortedMods.map((m) => `pub mod ${m};`).join('\n') + '\n';
+    project[modRsPath] = modContent;
+  }
+
+  // 3. Generate src/main.rs
+  const mainJsCode = files[mainFilename] || '';
+  const mainCompiled = transpile(mainJsCode, options);
+
+  let mainRsHeader = '';
+  if (topLevelMods.size > 0) {
+    const sortedTopMods = Array.from(topLevelMods).sort();
+    mainRsHeader = sortedTopMods.map((m) => `mod ${m};`).join('\n') + '\n\n';
+  }
+
+  project['src/main.rs'] = `${mainRsHeader}${mainCompiled}`.trim() + '\n';
+
+  return project;
+}
