@@ -121,6 +121,31 @@ export class RustEmitter {
           inferredType = Number.isInteger(arg.value) ? this.defaultNumberType : 'f64';
         } else if (arg.type === 'ArrayExpression') {
           inferredType = 'Vec<i64>';
+        } else if (arg.type === 'NewExpression' && arg.callee && arg.callee.name === 'Promise') {
+          const pScan = (pn) => {
+            if (!pn || typeof pn !== 'object' || inferredType) return;
+            if (pn.type === 'CallExpression' && pn.arguments && pn.arguments.length > 0) {
+              const resArg = pn.arguments[0];
+              if (resArg.type === 'StringLiteral' || resArg.type === 'TemplateLiteral') {
+                inferredType = 'String';
+                return;
+              } else if (resArg.type === 'NumericLiteral') {
+                inferredType = Number.isInteger(resArg.value) ? this.defaultNumberType : 'f64';
+                return;
+              } else if (resArg.type === 'BooleanLiteral') {
+                inferredType = 'bool';
+                return;
+              }
+            }
+            for (const pk of Object.keys(pn)) {
+              if (pk === 'leadingComments' || pk === 'trailingComments') continue;
+              const child = pn[pk];
+              if (Array.isArray(child)) child.forEach(pScan);
+              else if (child && typeof child === 'object') pScan(child);
+            }
+          };
+          pScan(arg);
+          if (!inferredType) inferredType = '()';
         }
       }
       for (const k of Object.keys(node)) {
@@ -132,6 +157,115 @@ export class RustEmitter {
     };
     scan(blockNode);
     return inferredType;
+  }
+
+  hasReturnPromise(blockNode) {
+    if (!blockNode) return false;
+    let found = false;
+    const scan = (node) => {
+      if (!node || typeof node !== 'object' || found) return;
+      if (
+        node.type === 'ReturnStatement' &&
+        node.argument &&
+        node.argument.type === 'NewExpression' &&
+        node.argument.callee &&
+        node.argument.callee.name === 'Promise'
+      ) {
+        found = true;
+        return;
+      }
+      for (const k of Object.keys(node)) {
+        if (k === 'leadingComments' || k === 'trailingComments') continue;
+        const child = node[k];
+        if (Array.isArray(child)) child.forEach(scan);
+        else if (child && typeof child === 'object') scan(child);
+      }
+    };
+    scan(blockNode);
+    return found;
+  }
+
+  emitPromise(newExpr) {
+    if (!newExpr.arguments || newExpr.arguments.length === 0) return '';
+    const executor = newExpr.arguments[0];
+    if (executor.type !== 'ArrowFunctionExpression' && executor.type !== 'FunctionExpression') {
+      return '';
+    }
+
+    const resolveParam = executor.params[0] ? executor.params[0].name : 'resolve';
+
+    let stmts = [];
+    if (executor.body.type === 'BlockStatement') {
+      stmts = executor.body.body;
+    } else {
+      stmts = [{ type: 'ExpressionStatement', expression: executor.body }];
+    }
+
+    const outputLines = [];
+
+    for (const s of stmts) {
+      if (
+        s.type === 'ExpressionStatement' &&
+        s.expression.type === 'CallExpression' &&
+        s.expression.callee.name === 'setTimeout'
+      ) {
+        const timeoutArgs = s.expression.arguments;
+        const cb = timeoutArgs[0];
+        const msNode = timeoutArgs[1];
+        const ms = msNode ? this.emit(msNode) : '0';
+
+        outputLines.push(`${this.indent()}tokio::time::sleep(std::time::Duration::from_millis(${ms})).await;`);
+
+        if (cb && (cb.type === 'ArrowFunctionExpression' || cb.type === 'FunctionExpression')) {
+          let cbStmts = [];
+          if (cb.body.type === 'BlockStatement') {
+            cbStmts = cb.body.body;
+          } else {
+            cbStmts = [{ type: 'ExpressionStatement', expression: cb.body }];
+          }
+
+          for (const cbs of cbStmts) {
+            if (
+              cbs.type === 'ExpressionStatement' &&
+              cbs.expression.type === 'CallExpression' &&
+              cbs.expression.callee.name === resolveParam
+            ) {
+              const resVal = cbs.expression.arguments[0];
+              if (resVal) {
+                let valCode = this.emit(resVal);
+                if (resVal.type === 'StringLiteral') {
+                  valCode = `"${resVal.value}".to_string()`;
+                }
+                outputLines.push(`${this.indent()}return ${valCode};`);
+              } else {
+                outputLines.push(`${this.indent()}return;`);
+              }
+            } else {
+              outputLines.push(this.emit(cbs));
+            }
+          }
+        }
+      } else if (
+        s.type === 'ExpressionStatement' &&
+        s.expression.type === 'CallExpression' &&
+        s.expression.callee.name === resolveParam
+      ) {
+        const resVal = s.expression.arguments[0];
+        if (resVal) {
+          let valCode = this.emit(resVal);
+          if (resVal.type === 'StringLiteral') {
+            valCode = `"${resVal.value}".to_string()`;
+          }
+          outputLines.push(`${this.indent()}return ${valCode};`);
+        } else {
+          outputLines.push(`${this.indent()}return;`);
+        }
+      } else {
+        outputLines.push(this.emit(s));
+      }
+    }
+
+    return outputLines.join('\n');
   }
 
   formatIdentifier(name) {
@@ -425,6 +559,9 @@ export class RustEmitter {
         return `${this.indent()}continue;`;
 
       case 'ReturnStatement':
+        if (node.argument && node.argument.type === 'NewExpression' && node.argument.callee && node.argument.callee.name === 'Promise') {
+          return this.emitPromise(node.argument);
+        }
         return `${this.indent()}return ${this.emit(node.argument)};`;
 
       case 'ExpressionStatement':
@@ -779,6 +916,9 @@ export class RustEmitter {
   }
 
   emitNewExpression(node) {
+    if (node.callee && node.callee.name === 'Promise') {
+      return this.emitPromise(node);
+    }
     const callee = this.emit(node.callee);
     const args = node.arguments.map((arg) => {
       if (arg.type === 'StringLiteral') {
@@ -875,7 +1015,8 @@ export class RustEmitter {
     const fnName = node.id ? node.id.name : 'default_export';
     const jsdoc = parseJSDoc(node.leadingComments);
     const isMain = fnName === 'main';
-    const isAsync = Boolean(node.async);
+    const hasPromiseReturn = this.hasReturnPromise(node.body);
+    const isAsync = Boolean(node.async) || hasPromiseReturn;
 
     const paramInfos = this.signatures.get(fnName) || [];
     const params = paramInfos.map((p) => `${p.name}: ${p.type}`).join(', ');
@@ -888,9 +1029,13 @@ export class RustEmitter {
     } else if (!isMain && node.returnType) {
       const ret = this.mapTsType(node.returnType.typeAnnotation);
       if (ret) returnClause = ` -> ${ret}`;
-    } else if (!isMain && !jsdoc.returns && this.hasReturnWithVal(node.body)) {
+    } else if (!isMain && !jsdoc.returns && (this.hasReturnWithVal(node.body) || hasPromiseReturn)) {
       const inferred = this.inferBlockReturnType(node.body);
-      returnClause = ` -> ${inferred || this.defaultNumberType}`;
+      if (inferred && inferred !== '()') {
+        returnClause = ` -> ${inferred}`;
+      } else if (!hasPromiseReturn) {
+        returnClause = ` -> ${this.defaultNumberType}`;
+      }
     }
 
     let tokioAttribute = '';

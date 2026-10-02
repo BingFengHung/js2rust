@@ -404,6 +404,22 @@ export function calculateTotal(subtotal, discount, taxPercent) {
   assert(rust.includes('let mut order = Order::new('), 'Upgrades order to let mut');
 }
 
+{
+  const js = `
+  function hello() {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        resolve("foo");
+      }, 300);
+    });
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub async fn hello() -> String'), 'Translates Promise-returning fn to async fn with String return');
+  assert(rust.includes('tokio::time::sleep(std::time::Duration::from_millis(300)).await;'), 'Translates setTimeout in Promise to tokio::time::sleep');
+  assert(rust.includes('return "foo".to_string();'), 'Translates resolve("foo") to return String');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);

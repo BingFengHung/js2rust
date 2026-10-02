@@ -189,8 +189,8 @@ export function generateRustProject(files, options = {}) {
 
   const project = {};
 
-  // 1. Cargo.toml (Include tokio if async/await is detected)
-  const hasAsync = Object.values(files).some((code) => /\basync\s+function\b|\bawait\b/.test(code));
+  // 1. Cargo.toml (Include tokio if async/await or Promise is detected)
+  const hasAsync = Object.values(files).some((code) => /\basync\s+function\b|\bawait\b|\bPromise\b/.test(code));
   let dependencies = '';
   if (hasAsync) {
     dependencies = 'tokio = { version = "1", features = ["full"] }\n';
