@@ -139,6 +139,17 @@ export class RustEmitter {
           }
         }
       }
+      if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
+        const fnName = node.callee.name;
+        const expectedParamInfos = this.signatures.get(fnName);
+        if (expectedParamInfos) {
+          node.arguments.forEach((arg, idx) => {
+            if (arg.type === 'Identifier' && expectedParamInfos[idx] && expectedParamInfos[idx].isMut) {
+              this.mutatedVars.add(arg.name);
+            }
+          });
+        }
+      }
       for (const k of Object.keys(node)) {
         if (k === 'leadingComments' || k === 'trailingComments') continue;
         const child = node[k];
@@ -722,8 +733,8 @@ export class RustEmitter {
 
   emitProgram(node) {
     this.collectClasses(node);
-    this.collectMutatedVars(node);
     this.collectSignatures(node, this.rootAst);
+    this.collectMutatedVars(node);
 
     const bodyOutput = node.body.map((stmt) => this.emit(stmt)).join('\n\n') + '\n';
 

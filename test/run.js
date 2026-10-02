@@ -311,6 +311,32 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('.collect::<Vec<_>>()'), 'Collects mapped iterator to Vec');
 }
 
+// Test 15: Mutable array parameter (&mut Vec<i64>) and mutable argument passing
+{
+  const js = `
+  function appendItem(list, item) {
+    list.push(item);
+  }
+
+  function main() {
+    const nums = [1, 2, 3];
+    appendItem(nums, 4);
+
+    const a = [1, 2, 3];
+    a.push(4);
+    const b = a.reduce((x, y) => {
+      return x + y;
+    }, 0);
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('pub fn appendItem(list: &mut Vec<i64>, item: i64)'), 'Infers list: &mut Vec<i64> because of push');
+  assert(rust.includes('let mut nums = vec![1, 2, 3];'), 'Upgrades const nums to let mut because passed as &mut');
+  assert(rust.includes('appendItem(&mut nums, 4);'), 'Passes nums as &mut nums');
+  assert(rust.includes('let mut a = vec![1, 2, 3];'), 'Upgrades a to let mut because of a.push(4)');
+  assert(rust.includes('a.into_iter().fold(0,'), 'Translates reduce to into_iter().fold(0, ...)');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);

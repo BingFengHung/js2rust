@@ -940,7 +940,7 @@ function greetUser(name) {
 
 function main() {
   const nums = [1, 2, 3];
-  // 呼叫處傳入 nums，編譯器自動推導 list: &mut [i64]
+  // 呼叫處傳入 nums，編譯器自動推導 list: &mut Vec<i64> 並提升為 let mut nums
   appendItem(nums, 4);
 
   greetUser("Ferris (Rust 吉祥物)");

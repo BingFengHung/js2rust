@@ -54,10 +54,10 @@ export function mapToRustType(jsType, isReturn = false, isMut = false) {
     if (trimmed === 'string') return "&'static str";
   }
 
-  // If mutated array parameter, convert to &mut [T] or &mut Vec<T>
+  // If mutated array parameter, convert to &mut Vec<T> (slices do not support push/pop)
   if (isMut) {
-    if (trimmed === 'int[]' || trimmed === 'i64[]' || trimmed === 'Array<int>') return '&mut [i64]';
-    if (trimmed === 'number[]' || trimmed === 'Array<number>') return '&mut [f64]';
+    if (trimmed === 'int[]' || trimmed === 'i64[]' || trimmed === 'Array<int>') return '&mut Vec<i64>';
+    if (trimmed === 'number[]' || trimmed === 'Array<number>') return '&mut Vec<f64>';
     if (trimmed === 'string[]') return '&mut Vec<String>';
   }
 
