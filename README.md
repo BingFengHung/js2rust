@@ -8,6 +8,14 @@
 ## ✨ 核心特色 (Features)
 
 * **純 JavaScript 開發**：不需要先搞懂複雜的 TypeScript 設定或編譯器，用標準 Node.js 即可開發與執行。
+* **🧠 免註解全域型別推導 (Smart Type Inference)**：
+  * **呼叫點型別推導 (Call-Site Inference)**：在 `main()` 呼叫 `ask("12")`，函式定義 `function ask(greet)` 中的 `greet` **自動推導為 `&str`**，完全不需要寫 JSDoc！
+  * **參數預設值推導**：`function foo(x = 10)` 自動推導為數值。
+  * **語意啟發式推導**：自動識別常見命名（如 `name`, `msg`, `isReady`, `items`）。
+* **📦 模組化宣告與引入 (ES Modules -> Rust Modules)**：
+  * 支援在 Playground 中以多分頁（Multi-Tabs）進行模組化開發（如 `main.js` + `math.js`）。
+  * 自動將 `export function add(...)` 轉換為 Rust 的 `pub mod math { pub fn add(...) }`。
+  * 自動將 `import { add } from './math.js'` 轉換為 Rust 的 `use math::add;`。
 * **🛡️ 結構體映射 (Rust Structs)**：支援 JSDoc `@typedef`，自動生成帶有 `#[derive(Debug, Clone)]` 的 Rust `struct`。
 * **🔥 自動靜態分析可變借用 (`&mut` Auto-Inference)**：函式內若有修改陣列（`arr[0] = 0` 或 `arr.push(x)`），轉譯器自動推導參數為 `&mut [T]`，並在呼叫端自動補上 `&mut`！
 * **🎯 模式匹配 (Pattern Matching)**：將 JavaScript 的 `switch / case` 自動轉譯為 Rust 原生的 `match` 表達式！

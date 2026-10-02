@@ -6,7 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { transpile } from '../src/index.js';
+import { transpile, transpileMultiModules } from '../src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,14 +24,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 1. Transpile API
+  // 1. Transpile API (Supports both single code and multi-module files)
   if (req.method === 'POST' && req.url === '/api/transpile') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
-        const { code } = JSON.parse(body);
-        const rust = transpile(code);
+        const payload = JSON.parse(body);
+        let rust = '';
+        if (payload.files && typeof payload.files === 'object') {
+          rust = transpileMultiModules(payload.files);
+        } else {
+          rust = transpile(payload.code || '');
+        }
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ rust }));
       } catch (err) {
@@ -42,7 +47,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 2. Proxy Rust Playground API (Fallback in case of browser network restrictions)
+  // 2. Proxy Rust Playground API
   if (req.method === 'POST' && req.url === '/api/run-rust') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });

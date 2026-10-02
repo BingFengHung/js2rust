@@ -145,7 +145,7 @@
 
     .panel-header {
       background-color: var(--bg-panel);
-      padding: 8px 16px;
+      padding: 0 16px;
       font-size: 0.82rem;
       font-weight: 600;
       color: var(--text-muted);
@@ -154,6 +154,64 @@
       align-items: center;
       justify-content: space-between;
       height: 38px;
+    }
+
+    /* Multi-Module Tabs */
+    .tabs-bar {
+      display: flex;
+      align-items: center;
+      height: 100%;
+      gap: 4px;
+      overflow-x: auto;
+    }
+
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      background: #21262d;
+      color: var(--text-muted);
+      border-radius: 4px 4px 0 0;
+      cursor: pointer;
+      border: 1px solid transparent;
+      user-select: none;
+    }
+
+    .tab.active {
+      background: var(--bg-editor);
+      color: var(--text-main);
+      border-color: var(--border-color);
+      border-bottom-color: var(--bg-editor);
+      font-weight: 600;
+    }
+
+    .tab-close {
+      font-size: 0.8rem;
+      opacity: 0.6;
+      margin-left: 2px;
+    }
+
+    .tab-close:hover {
+      opacity: 1;
+      color: #f85149;
+    }
+
+    .btn-add-tab {
+      background: transparent;
+      border: 1px dashed var(--border-color);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-left: 4px;
+    }
+
+    .btn-add-tab:hover {
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
     }
 
     .editor-container {
@@ -272,16 +330,16 @@
     <div class="brand">
       <span class="crab">🦀</span>
       <span>js-to-rust Playground</span>
-      <span class="badge">v0.1.0</span>
+      <span class="badge">v0.2.0 (Modules + Inference)</span>
     </div>
 
     <div class="actions">
       <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">選擇範本：</label>
       <select id="templateSelect">
-        <option value="advanced">🔥 進階全功能示範 (Struct, Match, &mut, 範本字串)</option>
+        <option value="modules">📦 模組化開發示範 (main.js + math.js)</option>
+        <option value="inference">🧠 免註解型別推導示範 (Type Inference)</option>
+        <option value="advanced">🔥 進階功能示範 (Struct, Match, &mut)</option>
         <option value="fibonacci">遞迴斐波那契數列 (Fibonacci)</option>
-        <option value="prime">質數篩選 (Prime Check)</option>
-        <option value="sumArray">陣列加總 (Array Sum)</option>
         <option value="custom">自訂空白程式碼 (Empty)</option>
       </select>
 
@@ -295,11 +353,13 @@
   </header>
 
   <main>
-    <!-- Left: JavaScript Editor -->
+    <!-- Left: JavaScript Multi-Module Editor -->
     <div class="panel">
       <div class="panel-header">
-        <span>JavaScript 輸入 (支援 JSDoc 型別與自動推導)</span>
-        <span style="font-size: 0.75rem; color: #58a6ff;">即時轉譯 (Live)</span>
+        <div class="tabs-bar" id="tabsBar">
+          <!-- Dynamic File Tabs -->
+        </div>
+        <span style="font-size: 0.75rem; color: #58a6ff; white-space: nowrap;">全域推導 + 模組化</span>
       </div>
       <div class="editor-container">
         <textarea id="jsInput" spellcheck="false" placeholder="在此輸入你的 JavaScript 演算法..."></textarea>
@@ -312,7 +372,7 @@
         <!-- Rust Code View -->
         <div style="display: flex; flex-direction: column; overflow: hidden;">
           <div class="panel-header">
-            <span>轉譯產生的 Rust 程式碼</span>
+            <span>轉譯產生的 Rust 模組與程式碼</span>
             <span id="transpileStatus" style="font-size: 0.75rem; color: #3fb950;">轉譯完成</span>
           </div>
           <div class="rust-preview">
@@ -333,144 +393,124 @@
   </main>
 
   <script>
+    // Templates for different scenarios
     const TEMPLATES = {
-      advanced: `/**
- * 2D 結構體定義 (Struct)
- * @typedef {Object} Point
- * @property {float} x
- * @property {float} y
- */
-
-/**
- * 計算點到原點距離
- * @param {Point} p
- * @returns {float}
- */
-function distanceFromOrigin(p) {
-  return Math.sqrt(p.x * p.x + p.y * p.y);
-}
-
-/**
- * 原地修改陣列測試
- * (js-to-rust 自動靜態分析偵測修改，自動產生 &mut [i64] 可變借用！)
- * @param {int[]} arr
- */
-function resetFirst(arr) {
-  arr[0] = 0;
-}
-
-/**
- * 模式匹配 (Switch -> Rust Match)
- * @param {int} code
- * @returns {string}
- */
-function getStatus(code) {
-  switch (code) {
-    case 200:
-      return "OK";
-    case 404:
-      return "Not Found";
-    case 500:
-      return "Server Error";
-    default:
-      return "Unknown";
-  }
-}
+      modules: {
+        'main.js': `import { add, multiply } from './math.js';
 
 function main() {
-  // 1. 結構體建立與借用傳遞 (&Point)
-  const pt = { x: 3.0, y: 4.0 };
-  const dist = distanceFromOrigin(pt);
-  console.log("Distance from origin =", dist);
+  const sum = add(15, 25);
+  console.log("從 math 模組計算 15 + 25 =", sum);
 
-  // 2. 模式匹配 (Match)
-  const statusMsg = getStatus(200);
-  console.log("Status message =", statusMsg);
-
-  // 3. 自動可變借用 (&mut numbers)
-  let numbers = [100, 200, 300];
-  resetFirst(numbers);
-  console.log("After resetFirst =", numbers);
-
-  // 4. Vector 方法 (.push 與 .includes -> .contains)
-  numbers.push(400);
-  console.log("Contains 400?", numbers.includes(400));
-
-  // 5. 範本字串與三元運算子
-  const score = 85;
-  const grade = score >= 60 ? "PASS" : "FAIL";
-  console.log(\`Student Score: \${score}, Result: \${grade}\`);
+  const product = multiply(7, 8);
+  console.log("從 math 模組計算 7 * 8 =", product);
 }`,
-
-      fibonacci: `/**
- * 遞迴斐波那契數列
- * @param {int} n
- * @returns {int}
+        'math.js': `/**
+ * 數學計算模組
  */
-function fibonacci(n) {
-  if (n <= 1) {
-    return n;
-  }
-  return fibonacci(n - 1) + fibonacci(n - 2);
+export function add(a, b) {
+  return a + b;
 }
 
-function main() {
-  const result = fibonacci(10);
-  console.log("Fibonacci(10) =", result);
-}`,
+export function multiply(a, b) {
+  return a * b;
+}`
+      },
 
-      prime: `/**
- * 質數檢查
- * @param {int} n
- * @returns {bool}
- */
-function isPrime(n) {
-  if (n <= 1) {
-    return false;
-  }
-  const limit = Math.floor(Math.sqrt(n));
-  for (let i = 2; i <= limit; i++) {
-    if (n % i === 0) {
-      return false;
-    }
-  }
-  return true;
+      inference: {
+        'main.js': `// 💡 完全不需要寫 JSDoc！轉譯器會自動根據呼叫點傳遞的型別進行全域推導
+function ask(greet) {
+  console.log("Greeting:", greet);
 }
 
-function main() {
-  const testNum = 37;
-  const prime = isPrime(testNum);
-  console.log("Is", testNum, "a prime number?", prime);
-}`,
+function calculateTax(price, rate) {
+  return price * rate;
+}
 
-      sumArray: `/**
- * 計算陣列元素總和
- * @param {int[]} nums
- * @returns {int}
- */
-function sumArray(nums) {
+function processScores(scores) {
   let total = 0;
-  for (let i = 0; i < nums.length; i++) {
-    total += nums[i];
+  for (let i = 0; i < scores.length; i++) {
+    total += scores[i];
   }
   return total;
 }
 
 function main() {
-  const scores = [85, 92, 78, 96, 88];
-  const total = sumArray(scores);
-  console.log("總分為:", total);
-}`,
+  // 自動推導 greet 為 &str
+  ask("Hello from Type Inference!");
 
-      custom: `function add(a, b) {
-  return a + b;
+  // 自動推導 price 和 rate 為數值
+  const tax = calculateTax(100.0, 0.05);
+  console.log("Tax =", tax);
+
+  // 自動推導 scores 為 &[i64] 並自動傳入借用 &
+  const myScores = [90, 85, 95];
+  const sum = processScores(myScores);
+  console.log("Total Score =", sum);
+}`
+      },
+
+      advanced: {
+        'main.js': `/**
+ * @typedef {Object} Point
+ * @property {float} x
+ * @property {float} y
+ */
+
+function distanceFromOrigin(p) {
+  return Math.sqrt(p.x * p.x + p.y * p.y);
+}
+
+function resetFirst(arr) {
+  arr[0] = 0;
+}
+
+function getStatus(code) {
+  switch (code) {
+    case 200:
+      return "OK";
+    default:
+      return "ERROR";
+  }
 }
 
 function main() {
-  console.log("Result:", add(10, 20));
+  const pt = { x: 3.0, y: 4.0 };
+  console.log("Distance =", distanceFromOrigin(pt));
+
+  let numbers = [100, 200, 300];
+  resetFirst(numbers);
+  console.log("After resetFirst =", numbers);
+
+  console.log("Status 200 =", getStatus(200));
 }`
+      },
+
+      fibonacci: {
+        'main.js': `function fibonacci(n) {
+  if (n <= 1) return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+function main() {
+  console.log("Fibonacci(10) =", fibonacci(10));
+}`
+      },
+
+      custom: {
+        'main.js': `function main() {
+  console.log("Hello, World!");
+}`
+      }
     };
 
+    // Current State
+    let files = JSON.parse(JSON.stringify(TEMPLATES.modules));
+    let activeFile = 'main.js';
+    let currentRustCode = '';
+    let debounceTimer = null;
+
+    const tabsBar = document.getElementById('tabsBar');
     const jsInput = document.getElementById('jsInput');
     const rustCode = document.getElementById('rustCode');
     const transpileStatus = document.getElementById('transpileStatus');
@@ -481,19 +521,80 @@ function main() {
     const execBadge = document.getElementById('execBadge');
     const terminalOutput = document.getElementById('terminalOutput');
 
-    let currentRustCode = '';
-    let debounceTimer = null;
+    function renderTabs() {
+      tabsBar.innerHTML = '';
+      const filenames = Object.keys(files);
 
-    // Load initial template
-    jsInput.value = TEMPLATES.fibonacci;
+      filenames.forEach((filename) => {
+        const tab = document.createElement('div');
+        tab.className = `tab ${filename === activeFile ? 'active' : ''}`;
+        tab.innerHTML = `<span>📄 ${filename}</span>`;
 
-    // Handle template change
+        if (filename !== 'main.js') {
+          const closeBtn = document.createElement('span');
+          closeBtn.className = 'tab-close';
+          closeBtn.textContent = '✕';
+          closeBtn.title = '刪除模組';
+          closeBtn.onclick = (e) => {
+            e.stopPropagation();
+            delete files[filename];
+            if (activeFile === filename) {
+              activeFile = 'main.js';
+            }
+            renderTabs();
+            jsInput.value = files[activeFile] || '';
+            doTranspile();
+          };
+          tab.appendChild(closeBtn);
+        }
+
+        tab.onclick = () => {
+          files[activeFile] = jsInput.value;
+          activeFile = filename;
+          renderTabs();
+          jsInput.value = files[activeFile] || '';
+          doTranspile();
+        };
+
+        tabsBar.appendChild(tab);
+      });
+
+      const addBtn = document.createElement('button');
+      addBtn.className = 'btn-add-tab';
+      addBtn.textContent = '+ 新增模組';
+      addBtn.onclick = () => {
+        const name = prompt('請輸入新模組檔案名稱 (例如 utils.js):', 'utils.js');
+        if (name && name.trim()) {
+          const validName = name.trim().endsWith('.js') ? name.trim() : `${name.trim()}.js`;
+          if (!files[validName]) {
+            files[validName] = `export function helper() {\n  return "from ${validName}";\n}\n`;
+            activeFile = validName;
+            renderTabs();
+            jsInput.value = files[activeFile];
+            doTranspile();
+          }
+        }
+      };
+      tabsBar.appendChild(addBtn);
+    }
+
+    // Handle template changes
     templateSelect.addEventListener('change', (e) => {
       const selected = e.target.value;
       if (TEMPLATES[selected]) {
-        jsInput.value = TEMPLATES[selected];
+        files = JSON.parse(JSON.stringify(TEMPLATES[selected]));
+        activeFile = Object.keys(files)[0] || 'main.js';
+        renderTabs();
+        jsInput.value = files[activeFile];
         doTranspile();
       }
+    });
+
+    // Handle input with debounce
+    jsInput.addEventListener('input', () => {
+      files[activeFile] = jsInput.value;
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(doTranspile, 250);
     });
 
     // Handle Tab key in textarea
@@ -504,24 +605,17 @@ function main() {
         const end = jsInput.selectionEnd;
         jsInput.value = jsInput.value.substring(0, start) + '  ' + jsInput.value.substring(end);
         jsInput.selectionStart = jsInput.selectionEnd = start + 2;
+        files[activeFile] = jsInput.value;
         doTranspile();
       }
-      // Ctrl + Enter to run
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         runRustCode();
       }
     });
 
-    // Handle input with debounce
-    jsInput.addEventListener('input', () => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(doTranspile, 250);
-    });
-
     // Call local transpile API
     async function doTranspile() {
-      const code = jsInput.value;
       try {
         transpileStatus.textContent = '轉譯中...';
         transpileStatus.style.color = '#58a6ff';
@@ -529,7 +623,7 @@ function main() {
         const res = await fetch('/api/transpile', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code })
+          body: JSON.stringify({ files })
         });
 
         const data = await res.json();
@@ -584,7 +678,7 @@ function main() {
         if (data.success) {
           execBadge.className = 'status-tag status-success';
           execBadge.textContent = '執行成功 (Status: 0)';
-          
+
           let outputHtml = '';
           if (data.stdout) {
             outputHtml += `<div class="stdout-text"><strong>[執行輸出 stdout]:</strong>\n${escapeHtml(data.stdout)}</div>\n`;
@@ -625,7 +719,9 @@ function main() {
       return div.innerHTML;
     }
 
-    // Initial Transpilation
+    // Init
+    renderTabs();
+    jsInput.value = files[activeFile];
     doTranspile();
   </script>
 </body>

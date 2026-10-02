@@ -3,6 +3,7 @@
  */
 
 import { parseJSDoc, mapToRustType } from './types.js';
+import { inferParameterType } from './inference.js';
 
 export class RustEmitter {
   constructor(options = {}) {
@@ -11,6 +12,7 @@ export class RustEmitter {
     this.defaultNumberType = options.defaultNumberType || 'i64';
     this.signatures = new Map(); // fnName -> Array<{ name: string, type: string, isMut: boolean, isStruct: boolean }>
     this.structs = new Map();    // structName -> Array<{ name: string, type: string }>
+    this.rootAst = null;
   }
 
   indent() {
@@ -40,20 +42,38 @@ export class RustEmitter {
 
   /**
    * Collects function signatures and runs static analysis for parameter mutability (&mut)
+   * and runs smart type inference when JSDoc is not provided.
    */
-  collectSignatures(programNode) {
+  collectSignatures(programNode, ast) {
     if (!programNode || !programNode.body) return;
 
-    for (const stmt of programNode.body) {
+    for (let stmt of programNode.body) {
+      // Unwrap ExportNamedDeclaration if present
+      if (stmt.type === 'ExportNamedDeclaration' && stmt.declaration) {
+        stmt = stmt.declaration;
+      }
+
       if (stmt.type === 'FunctionDeclaration') {
         const fnName = stmt.id.name;
         const jsdoc = parseJSDoc(stmt.leadingComments);
         const mutatedParams = this.findMutatedParams(stmt);
 
-        const paramInfos = stmt.params.map((param) => {
-          const name = param.name;
+        const paramInfos = stmt.params.map((param, paramIdx) => {
+          const name = param.type === 'AssignmentPattern' ? param.left.name : param.name;
           const isMut = mutatedParams.has(name);
-          const rawType = jsdoc.params[name] || this.defaultNumberType;
+
+          // 1. Try JSDoc first
+          let rawType = jsdoc.params[name];
+
+          // 2. If no JSDoc, run Smart Type Inference!
+          if (!rawType) {
+            rawType = inferParameterType(fnName, paramIdx, name, param, stmt, ast);
+          }
+
+          // 3. Fallback
+          if (!rawType) {
+            rawType = this.defaultNumberType;
+          }
 
           let isStruct = false;
           let rustType = '';
@@ -78,7 +98,9 @@ export class RustEmitter {
    */
   findMutatedParams(fnNode) {
     const mutated = new Set();
-    const paramNames = new Set(fnNode.params.map((p) => p.name));
+    const paramNames = new Set(
+      fnNode.params.map((p) => (p.type === 'AssignmentPattern' ? p.left.name : p.name))
+    );
 
     const checkNode = (node) => {
       if (!node || typeof node !== 'object') return;
@@ -136,6 +158,7 @@ export class RustEmitter {
 
   emitProgramWithAst(ast) {
     this.collectTypeDefs(ast.comments || []);
+    this.rootAst = ast;
     return this.emitProgram(ast.program);
   }
 
@@ -145,6 +168,12 @@ export class RustEmitter {
     switch (node.type) {
       case 'Program':
         return this.emitProgram(node);
+
+      case 'ExportNamedDeclaration':
+        return this.emit(node.declaration);
+
+      case 'ImportDeclaration':
+        return this.emitImportDeclaration(node);
 
       case 'FunctionDeclaration':
         return this.emitFunctionDeclaration(node);
@@ -214,8 +243,7 @@ export class RustEmitter {
         return this.emitTemplateLiteral(node);
 
       case 'NumericLiteral':
-        // Output floating point if contains dot, otherwise regular number
-        return String(node.value).includes('.') ? String(node.value) : String(node.value);
+        return String(node.value);
 
       case 'StringLiteral':
         return `"${node.value}"`;
@@ -232,8 +260,25 @@ export class RustEmitter {
     }
   }
 
+  emitImportDeclaration(node) {
+    const rawPath = node.source.value;
+    const modName = rawPath.replace(/^\.\//, '').replace(/\.(js|ts|mjs)$/, '');
+
+    const lines = [];
+    for (const spec of node.specifiers) {
+      if (spec.type === 'ImportSpecifier') {
+        lines.push(`use ${modName}::${spec.local.name};`);
+      } else if (spec.type === 'ImportNamespaceSpecifier') {
+        lines.push(`use ${modName}::*;`);
+      } else if (spec.type === 'ImportDefaultSpecifier') {
+        lines.push(`use ${modName}::${spec.local.name};`);
+      }
+    }
+    return lines.join('\n');
+  }
+
   emitProgram(node) {
-    this.collectSignatures(node);
+    this.collectSignatures(node, this.rootAst);
 
     let output = '';
 
