@@ -462,8 +462,125 @@
       animation: spin 0.8s linear infinite;
     }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1f6feb;
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 1000;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.25s ease;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Modal Dialog */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .modal-overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 24px;
+      width: 420px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+
+    .modal-card h3 {
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+      color: var(--text-main);
+    }
+
+    .modal-card p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .modal-options {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .modal-opt-btn {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--bg-editor);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: left;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: all 0.15s ease;
+    }
+
+    .modal-opt-btn:hover {
+      border-color: var(--accent-blue);
+      background: #21262d;
+    }
+
+    .modal-opt-btn span.icon {
+      font-size: 1.3rem;
+    }
+
+    .modal-opt-btn small {
+      display: block;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 400;
+      margin-top: 2px;
+    }
+
+    .modal-cancel-btn {
+      margin-top: 16px;
+      width: 100%;
+      padding: 8px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+
+    .modal-cancel-btn:hover {
+      color: var(--text-main);
     }
   </style>
 </head>
@@ -484,7 +601,7 @@
     </div>
 
     <div class="actions">
-      <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">選擇專案範本：</label>
+      <label for="templateSelect" style="font-size: 0.82rem; color: var(--text-muted);">範本：</label>
       <select id="templateSelect">
         <option value="nested">📂 巢狀資料夾架構 (src/utils/math.js)</option>
         <option value="modules">📦 基本模組架構 (src/math.js)</option>
@@ -493,12 +610,18 @@
         <option value="custom">自訂空白專案 (Empty)</option>
       </select>
 
-      <button id="copyBtn" class="btn btn-secondary">📋 複製 Rust 代碼</button>
+      <button id="importBtn" class="btn btn-secondary" title="匯入本機專案資料夾或備份檔">📂 匯入專案</button>
+      <button id="exportBtn" class="btn btn-secondary" title="匯出並下載當前專案備份檔">💾 匯出專案</button>
+      <button id="copyBtn" class="btn btn-secondary">📋 複製 Rust</button>
 
       <button id="runBtn" class="btn btn-run">
         <span id="runIcon">▶</span>
         <span>在線編譯並執行 Rust</span>
       </button>
+
+      <!-- Hidden File Inputs -->
+      <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none">
+      <input type="file" id="projectFileInput" accept=".json" style="display:none">
     </div>
   </header>
 
@@ -556,6 +679,34 @@
       </div>
     </div>
   </main>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast">訊息</div>
+
+  <!-- Import Modal Dialog -->
+  <div id="importModal" class="modal-overlay">
+    <div class="modal-card">
+      <h3>📂 匯入專案</h3>
+      <p>請選擇你要匯入專案的方式。這將會載入你的 JavaScript 檔案並即時建立檔案樹與 Rust 模組。</p>
+      <div class="modal-options">
+        <button id="optFolderBtn" class="modal-opt-btn">
+          <span class="icon">📁</span>
+          <div>
+            <span>選擇本機專案資料夾</span>
+            <small>直接讀取你電腦上的專案資料夾結構與 .js 檔案</small>
+          </div>
+        </button>
+        <button id="optJsonBtn" class="modal-opt-btn">
+          <span class="icon">📄</span>
+          <div>
+            <span>載入專案備份檔 (.json)</span>
+            <small>還原先前從本系統「💾 匯出專案」下載的設定檔</small>
+          </div>
+        </button>
+      </div>
+      <button id="modalCancelBtn" class="modal-cancel-btn">取消</button>
+    </div>
+  </div>
 
   <script>
     // Templates for different scenarios
@@ -649,15 +800,7 @@ function main() {
       }
     };
 
-    // State
-    let currentTemplate = TEMPLATES.nested;
-    let folders = new Set(currentTemplate.folders);
-    let files = JSON.parse(JSON.stringify(currentTemplate.files));
-    let collapsedFolders = new Set();
-    let activeFile = 'src/main.js';
-    let currentRustCode = '';
-    let debounceTimer = null;
-
+    // Elements
     const treeView = document.getElementById('treeView');
     const activeFilePath = document.getElementById('activeFilePath');
     const addFileBtn = document.getElementById('addFileBtn');
@@ -674,10 +817,187 @@ function main() {
     const execBadge = document.getElementById('execBadge');
     const terminalOutput = document.getElementById('terminalOutput');
 
+    // Import / Export Elements
+    const importBtn = document.getElementById('importBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const importModal = document.getElementById('importModal');
+    const modalCancelBtn = document.getElementById('modalCancelBtn');
+    const optFolderBtn = document.getElementById('optFolderBtn');
+    const optJsonBtn = document.getElementById('optJsonBtn');
+    const folderInput = document.getElementById('folderInput');
+    const projectFileInput = document.getElementById('projectFileInput');
+    const toast = document.getElementById('toast');
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 2500);
+    }
+
+    // Auto-save state to localStorage
+    function saveToLocalStorage() {
+      try {
+        const payload = {
+          files,
+          folders: Array.from(folders),
+          activeFile,
+        };
+        localStorage.setItem('js2rust_saved_project', JSON.stringify(payload));
+      } catch (e) {}
+    }
+
+    // Load state from localStorage on startup
+    function loadFromLocalStorage() {
+      try {
+        const saved = localStorage.getItem('js2rust_saved_project');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.files && Object.keys(parsed.files).length > 0) {
+            files = parsed.files;
+            folders = new Set(parsed.folders || ['src']);
+            activeFile = parsed.activeFile && files[parsed.activeFile] ? parsed.activeFile : Object.keys(files)[0];
+            return true;
+          }
+        }
+      } catch (e) {}
+      return false;
+    }
+
     // Sidebar Toggle (Hamburger Menu)
     sidebarToggleBtn.addEventListener('click', () => {
       mainContainer.classList.toggle('sidebar-collapsed');
       sidebarToggleBtn.classList.toggle('collapsed', mainContainer.classList.contains('sidebar-collapsed'));
+    });
+
+    // Modal Events
+    importBtn.addEventListener('click', () => importModal.classList.add('show'));
+    modalCancelBtn.addEventListener('click', () => importModal.classList.remove('show'));
+    importModal.addEventListener('click', (e) => {
+      if (e.target === importModal) importModal.classList.remove('show');
+    });
+
+    optFolderBtn.addEventListener('click', () => {
+      importModal.classList.remove('show');
+      folderInput.value = '';
+      folderInput.click();
+    });
+
+    optJsonBtn.addEventListener('click', () => {
+      importModal.classList.remove('show');
+      projectFileInput.value = '';
+      projectFileInput.click();
+    });
+
+    // 1. Native Folder Import (webkitdirectory)
+    folderInput.addEventListener('change', async (e) => {
+      const fileList = e.target.files;
+      if (!fileList || fileList.length === 0) return;
+
+      const newFiles = {};
+      const newFolders = new Set(['src']);
+      let loadedCount = 0;
+
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        const relPath = file.webkitRelativePath;
+
+        // Skip node_modules, git, and hidden files
+        if (relPath.includes('node_modules') || relPath.includes('.git') || relPath.includes('.DS_Store')) {
+          continue;
+        }
+
+        // Only load JS / TS source files
+        if (file.name.endsWith('.js') || file.name.endsWith('.mjs') || file.name.endsWith('.ts')) {
+          const text = await file.text();
+          const parts = relPath.split('/');
+          parts.shift(); // Remove root folder name
+
+          let cleanPath = parts.join('/');
+          if (!cleanPath.startsWith('src/')) {
+            cleanPath = `src/${cleanPath}`;
+          }
+
+          newFiles[cleanPath] = text;
+
+          // Track intermediate folders
+          const folderParts = cleanPath.split('/');
+          for (let f = 1; f < folderParts.length; f++) {
+            newFolders.add(folderParts.slice(0, f).join('/'));
+          }
+
+          loadedCount++;
+        }
+      }
+
+      if (loadedCount === 0) {
+        alert('選取的資料夾內未找到任何 .js 檔案！');
+        return;
+      }
+
+      files = newFiles;
+      folders = newFolders;
+      activeFile = files['src/main.js'] ? 'src/main.js' : Object.keys(files)[0];
+
+      renderTree();
+      activeFilePath.textContent = activeFile;
+      jsInput.value = files[activeFile] || '';
+      saveToLocalStorage();
+      doTranspile();
+      showToast(`成功匯入資料夾！已載入 ${loadedCount} 個檔案`);
+    });
+
+    // 2. Project JSON Backup Import
+    projectFileInput.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+          if (data && data.files) {
+            files = data.files;
+            folders = new Set(data.folders || ['src']);
+            activeFile = files['src/main.js'] ? 'src/main.js' : Object.keys(files)[0];
+
+            renderTree();
+            activeFilePath.textContent = activeFile;
+            jsInput.value = files[activeFile] || '';
+            saveToLocalStorage();
+            doTranspile();
+            showToast('專案備份檔匯入成功！');
+          } else {
+            alert('無效的專案備份檔格式！');
+          }
+        } catch (err) {
+          alert(`檔案讀取錯誤: ${err.message}`);
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // 3. Export Project Backup
+    exportBtn.addEventListener('click', () => {
+      const exportData = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        folders: Array.from(folders),
+        files,
+        activeFile,
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `js2rust-project-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('專案備份檔已成功匯出並下載！');
     });
 
     /**
@@ -853,7 +1173,9 @@ function main() {
         const clean = folderName.trim().replace(/^\//, '').replace(/\/$/, '');
         const fullPath = `src/${clean}`;
         folders.add(fullPath);
+        saveToLocalStorage();
         renderTree();
+        showToast(`已建立資料夾: ${fullPath}`);
       }
     };
 
@@ -881,10 +1203,12 @@ function main() {
         const baseModName = parts[parts.length - 1].replace('.js', '');
         files[fullPath] = `/**\n * ${baseModName} 模組\n */\nexport function calc() {\n  return 42;\n}\n`;
         activeFile = fullPath;
+        saveToLocalStorage();
         renderTree();
         activeFilePath.textContent = activeFile;
         jsInput.value = files[activeFile];
         doTranspile();
+        showToast(`已建立檔案: ${fullPath}`);
       }
     };
 
@@ -896,16 +1220,19 @@ function main() {
         folders = new Set(currentTemplate.folders);
         files = JSON.parse(JSON.stringify(currentTemplate.files));
         activeFile = Object.keys(files)[0] || 'src/main.js';
+        saveToLocalStorage();
         renderTree();
         activeFilePath.textContent = activeFile;
         jsInput.value = files[activeFile];
         doTranspile();
+        showToast('已載入範本專案');
       }
     });
 
     // Handle input with debounce
     jsInput.addEventListener('input', () => {
       files[activeFile] = jsInput.value;
+      saveToLocalStorage();
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(doTranspile, 250);
     });
@@ -919,6 +1246,7 @@ function main() {
         jsInput.value = jsInput.value.substring(0, start) + '  ' + jsInput.value.substring(end);
         jsInput.selectionStart = jsInput.selectionEnd = start + 2;
         files[activeFile] = jsInput.value;
+        saveToLocalStorage();
         doTranspile();
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -1032,7 +1360,10 @@ function main() {
       return div.innerHTML;
     }
 
-    // Init
+    // Init: Load from localStorage if available, or use default template
+    if (loadFromLocalStorage()) {
+      showToast('已還原上次編輯的專案');
+    }
     renderTree();
     activeFilePath.textContent = activeFile;
     jsInput.value = files[activeFile] || '';
