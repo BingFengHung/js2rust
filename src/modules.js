@@ -3,7 +3,9 @@
  * Handles ES Modules (import / export) and bundles multi-file & nested folders into Rust's module hierarchy.
  */
 
+import { parse } from '@babel/parser';
 import { transpile } from './index.js';
+import { doesMethodMutateThis } from './codegen.js';
 
 /**
  * Normalizes a file path by removing leading './' or 'src/'
@@ -34,6 +36,51 @@ function findMainFilename(files) {
 }
 
 /**
+ * Scans all module files to collect shared enums, classes, and mutating methods
+ */
+function collectCrossModuleMetadata(files, options) {
+  const sharedEnums = new Set(options.sharedEnums || []);
+  const sharedMutatingMethods = new Set(options.sharedMutatingMethods || []);
+  const sharedClasses = new Set(options.sharedClasses || []);
+
+  for (const rawPath of Object.keys(files)) {
+    try {
+      const ast = parse(files[rawPath], {
+        sourceType: 'module',
+        allowReturnOutsideFunction: true,
+        plugins: ['classProperties', 'numericSeparator', 'typescript'],
+      });
+      for (let stmt of ast.program.body) {
+        if ((stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration') && stmt.declaration) {
+          stmt = stmt.declaration;
+        }
+        if (stmt.type === 'TSEnumDeclaration') {
+          sharedEnums.add(stmt.id.name);
+        } else if (stmt.type === 'ClassDeclaration') {
+          const className = stmt.id ? stmt.id.name : 'Anonymous';
+          sharedClasses.add(className);
+          const methods = stmt.body.body.filter((m) => m.type === 'ClassMethod' && m.kind === 'method');
+          for (const m of methods) {
+            if (doesMethodMutateThis(m.body)) {
+              sharedMutatingMethods.add(m.key.name);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // ignore parse errors in pre-pass
+    }
+  }
+
+  return {
+    ...options,
+    sharedEnums,
+    sharedMutatingMethods,
+    sharedClasses,
+  };
+}
+
+/**
  * Transpiles multiple JavaScript files (including folders) into a single cohesive Rust program.
  * @param {Record<string, string>} files - Map of filename/path to JS source code.
  * @param {object} [options] - Compiler options.
@@ -45,6 +92,8 @@ export function transpileMultiModules(files, options = {}) {
   if (filenames.length === 0) {
     return '';
   }
+
+  const moduleOptions = collectCrossModuleMetadata(files, options);
 
   // Find main entry point (main.js, index.js, or file with function main())
   const mainFilename = findMainFilename(files);
@@ -60,7 +109,7 @@ export function transpileMultiModules(files, options = {}) {
 
     if (rawPath === mainFilename) {
       // Transpile main file (this will automatically convert `import` to `use path::item;`)
-      mainRust = transpile(code, options);
+      mainRust = transpile(code, moduleOptions);
     } else {
       // It's a module file (may be inside nested folders like utils/math.js)
       const parts = norm
@@ -68,7 +117,7 @@ export function transpileMultiModules(files, options = {}) {
         .split('/')
         .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
 
-      const compiledCode = transpile(code, options);
+      const compiledCode = transpile(code, moduleOptions);
 
       // Insert into module tree
       let curr = rootModule;
@@ -108,7 +157,7 @@ export function transpileMultiModules(files, options = {}) {
 
   const modulesRust = renderTree(rootModule);
 
-  let finalOutput = '';
+  let finalOutput = '#![allow(unused_imports, unused_variables, dead_code)]\n\n';
   if (modulesRust.trim()) {
     finalOutput += `// === Modules & Nested Folders ===\n${modulesRust}`;
   }
@@ -135,6 +184,8 @@ export function generateRustProject(files, options = {}) {
   if (filenames.length === 0) {
     return {};
   }
+
+  const moduleOptions = collectCrossModuleMetadata(files, options);
 
   const project = {};
 
@@ -170,7 +221,7 @@ ${dependencies}`;
       .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
 
     const code = files[rawPath];
-    const compiledCode = transpile(code, options);
+    const compiledCode = transpile(code, moduleOptions);
 
     // rustFilePath: e.g. 'src/utils/math.rs'
     const rustFilePath = `src/${parts.join('/')}.rs`;
@@ -200,12 +251,12 @@ ${dependencies}`;
 
   // 3. Generate src/main.rs
   const mainJsCode = files[mainFilename] || '';
-  const mainCompiled = transpile(mainJsCode, options);
+  const mainCompiled = transpile(mainJsCode, moduleOptions);
 
-  let mainRsHeader = '';
+  let mainRsHeader = '#![allow(unused_imports, unused_variables, dead_code)]\n\n';
   if (topLevelMods.size > 0) {
     const sortedTopMods = Array.from(topLevelMods).sort();
-    mainRsHeader = sortedTopMods.map((m) => `mod ${m};`).join('\n') + '\n\n';
+    mainRsHeader += sortedTopMods.map((m) => `mod ${m};`).join('\n') + '\n\n';
   }
 
   project['src/main.rs'] = `${mainRsHeader}${mainCompiled}`.trim() + '\n';

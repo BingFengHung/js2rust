@@ -337,6 +337,73 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('a.into_iter().fold(0,'), 'Translates reduce to into_iter().fold(0, ...)');
 }
 
+{
+  const files = {
+    'src/main.js': `
+import { calculateTotal } from './utils/calculator.js';
+import { Order, OrderStatus } from './models/order.js';
+import { InventoryManager } from './services/inventory.js';
+
+function main() {
+  const inventory = new InventoryManager();
+  const order = new Order(1001, "Alice", 1200);
+  if (inventory.checkStock(2)) {
+    inventory.deductStock(2);
+    order.markAsPaid();
+  }
+}
+`,
+    'src/models/order.js': `
+export enum OrderStatus {
+  Pending,
+  Paid,
+  Shipped
+}
+export class Order {
+  constructor(id, customer, amount) {
+    this.id = id;
+    this.customer = customer;
+    this.amount = amount;
+    this.status = OrderStatus.Pending;
+  }
+  markAsPaid() {
+    this.status = OrderStatus.Paid;
+  }
+}
+`,
+    'src/services/inventory.js': `
+export class InventoryManager {
+  constructor() {
+    this.stock = 50;
+  }
+  checkStock(quantity) {
+    return this.stock >= quantity;
+  }
+  deductStock(quantity) {
+    if (this.stock >= quantity) {
+      this.stock -= quantity;
+      return true;
+    }
+    return false;
+  }
+}
+`,
+    'src/utils/calculator.js': `
+export function calculateTotal(subtotal, discount, taxPercent) {
+  return subtotal - discount;
+}
+`
+  };
+  const rust = transpileMultiModules(files);
+  assert(rust.includes('pub enum OrderStatus'), 'Emits OrderStatus enum');
+  assert(rust.includes('pub struct Order'), 'Emits Order struct');
+  assert(rust.includes('pub status: OrderStatus,'), 'Infers Order status field as OrderStatus');
+  assert(rust.includes('pub fn checkStock(&self, quantity: i64) -> bool'), 'Infers checkStock return as bool');
+  assert(rust.includes('pub fn deductStock(&mut self, quantity: i64) -> bool'), 'Infers deductStock return as bool');
+  assert(rust.includes('let mut inventory = InventoryManager::new();'), 'Upgrades inventory to let mut');
+  assert(rust.includes('let mut order = Order::new('), 'Upgrades order to let mut');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);

@@ -5,22 +5,133 @@
 import { parseJSDoc, mapToRustType } from './types.js';
 import { inferParameterType } from './inference.js';
 
+export function doesMethodMutateThis(bodyNode) {
+  let mutates = false;
+  const check = (node) => {
+    if (!node || typeof node !== 'object' || mutates) return;
+
+    if (node.type === 'AssignmentExpression') {
+      if (
+        node.left.type === 'MemberExpression' &&
+        node.left.object.type === 'ThisExpression'
+      ) {
+        mutates = true;
+        return;
+      }
+    }
+
+    if (node.type === 'UpdateExpression') {
+      if (
+        node.argument.type === 'MemberExpression' &&
+        node.argument.object.type === 'ThisExpression'
+      ) {
+        mutates = true;
+        return;
+      }
+    }
+
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'MemberExpression' &&
+      node.callee.object.type === 'MemberExpression' &&
+      node.callee.object.object.type === 'ThisExpression'
+    ) {
+      const method = node.callee.property.name;
+      if (['push', 'pop', 'reverse', 'sort', 'splice'].includes(method)) {
+        mutates = true;
+        return;
+      }
+    }
+
+    for (const key of Object.keys(node)) {
+      if (key === 'leadingComments' || key === 'trailingComments') continue;
+      const child = node[key];
+      if (Array.isArray(child)) {
+        child.forEach(check);
+      } else if (child && typeof child === 'object') {
+        check(child);
+      }
+    }
+  };
+
+  check(bodyNode);
+  return mutates;
+}
+
 export class RustEmitter {
   constructor(options = {}) {
     this.indentSize = options.indentSize || 4;
     this.indentLevel = 0;
     this.defaultNumberType = options.defaultNumberType || 'i64';
     this.signatures = new Map(); // fnName -> Array<{ name: string, type: string, isMut: boolean, isStruct: boolean }>
-    this.structs = new Map();    // structName -> Array<{ name: string, type: string }>
+    this.structs = new Map(options.sharedStructs || []);    // structName -> Array<{ name: string, type: string }>
     this.rootAst = null;
     this.needThread = false;
     this.needDuration = false;
     this.needMpsc = false;
     this.needArcMutex = false;
-    this.classes = new Set();
-    this.classMutatingMethods = new Set();
+    this.classes = new Set(options.sharedClasses || []);
+    this.classMutatingMethods = new Set(options.sharedMutatingMethods || []);
     this.mutatedVars = new Set();
-    this.enums = new Set();
+    this.enums = new Set(options.sharedEnums || []);
+  }
+
+  mapTsType(tsType) {
+    if (!tsType) return this.defaultNumberType;
+    switch (tsType.type) {
+      case 'TSStringKeyword':
+        return 'String';
+      case 'TSNumberKeyword':
+        return this.defaultNumberType;
+      case 'TSBooleanKeyword':
+        return 'bool';
+      case 'TSVoidKeyword':
+        return '';
+      case 'TSTypeReference':
+        return tsType.typeName.name;
+      case 'TSArrayType':
+        return `Vec<${this.mapTsType(tsType.elementType)}>`;
+      default:
+        return this.defaultNumberType;
+    }
+  }
+
+  inferBlockReturnType(blockNode) {
+    if (!blockNode) return null;
+    let inferredType = null;
+
+    const scan = (node) => {
+      if (!node || typeof node !== 'object') return;
+      if (node.type === 'ReturnStatement' && node.argument) {
+        const arg = node.argument;
+        if (arg.type === 'BooleanLiteral') {
+          inferredType = 'bool';
+        } else if (
+          arg.type === 'BinaryExpression' &&
+          ['==', '===', '!=', '!==', '<', '<=', '>', '>=', '&&', '||'].includes(arg.operator)
+        ) {
+          inferredType = 'bool';
+        } else if (arg.type === 'UnaryExpression' && arg.operator === '!') {
+          inferredType = 'bool';
+        } else if (arg.type === 'LogicalExpression' && ['&&', '||'].includes(arg.operator)) {
+          inferredType = 'bool';
+        } else if (arg.type === 'StringLiteral' || arg.type === 'TemplateLiteral') {
+          inferredType = 'String';
+        } else if (arg.type === 'NumericLiteral') {
+          inferredType = Number.isInteger(arg.value) ? this.defaultNumberType : 'f64';
+        } else if (arg.type === 'ArrayExpression') {
+          inferredType = 'Vec<i64>';
+        }
+      }
+      for (const k of Object.keys(node)) {
+        if (k === 'leadingComments' || k === 'trailingComments') continue;
+        const child = node[k];
+        if (Array.isArray(child)) child.forEach(scan);
+        else if (child && typeof child === 'object') scan(child);
+      }
+    };
+    scan(blockNode);
+    return inferredType;
   }
 
   formatIdentifier(name) {
@@ -35,62 +146,13 @@ export class RustEmitter {
   }
 
   doesMethodMutateThis(bodyNode) {
-    let mutates = false;
-    const check = (node) => {
-      if (!node || typeof node !== 'object' || mutates) return;
-
-      if (node.type === 'AssignmentExpression') {
-        if (
-          node.left.type === 'MemberExpression' &&
-          node.left.object.type === 'ThisExpression'
-        ) {
-          mutates = true;
-          return;
-        }
-      }
-
-      if (node.type === 'UpdateExpression') {
-        if (
-          node.argument.type === 'MemberExpression' &&
-          node.argument.object.type === 'ThisExpression'
-        ) {
-          mutates = true;
-          return;
-        }
-      }
-
-      if (
-        node.type === 'CallExpression' &&
-        node.callee.type === 'MemberExpression' &&
-        node.callee.object.type === 'MemberExpression' &&
-        node.callee.object.object.type === 'ThisExpression'
-      ) {
-        const method = node.callee.property.name;
-        if (['push', 'pop', 'reverse', 'sort', 'splice'].includes(method)) {
-          mutates = true;
-          return;
-        }
-      }
-
-      for (const key of Object.keys(node)) {
-        if (key === 'leadingComments' || key === 'trailingComments') continue;
-        const child = node[key];
-        if (Array.isArray(child)) {
-          child.forEach(check);
-        } else if (child && typeof child === 'object') {
-          check(child);
-        }
-      }
-    };
-
-    check(bodyNode);
-    return mutates;
+    return doesMethodMutateThis(bodyNode);
   }
 
   collectClasses(programNode) {
     if (!programNode || !programNode.body) return;
-    this.classes = new Set();
-    this.classMutatingMethods = new Set();
+    if (!this.classes) this.classes = new Set();
+    if (!this.classMutatingMethods) this.classMutatingMethods = new Set();
 
     for (let stmt of programNode.body) {
       if ((stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration') && stmt.declaration) {
@@ -457,6 +519,7 @@ export class RustEmitter {
     );
 
     const fields = new Map();
+    const fieldInitializers = new Map();
     const ctorParams = ctor ? ctor.params : [];
     const ctorJsdoc = ctor ? parseJSDoc(ctor.leadingComments) : { params: {}, returns: null };
 
@@ -465,7 +528,9 @@ export class RustEmitter {
       if (member.type === 'ClassProperty' || member.type === 'PropertyDefinition') {
         const propName = member.key.name;
         let propType = this.defaultNumberType;
-        if (member.value) {
+        if (member.typeAnnotation) {
+          propType = this.mapTsType(member.typeAnnotation.typeAnnotation);
+        } else if (member.value) {
           if (member.value.type === 'NumericLiteral') {
             propType = Number.isInteger(member.value.value) ? this.defaultNumberType : 'f64';
           } else if (member.value.type === 'StringLiteral') {
@@ -473,6 +538,7 @@ export class RustEmitter {
           } else if (member.value.type === 'BooleanLiteral') {
             propType = 'bool';
           }
+          fieldInitializers.set(propName, member.value);
         }
         fields.set(propName, propType);
       }
@@ -488,29 +554,46 @@ export class RustEmitter {
           stmt.expression.left.object.type === 'ThisExpression'
         ) {
           const fieldName = stmt.expression.left.property.name;
+          const right = stmt.expression.right;
+          fieldInitializers.set(fieldName, right);
           let fieldType = this.defaultNumberType;
 
-          if (stmt.expression.right.type === 'Identifier') {
-            const paramName = stmt.expression.right.name;
-            if (ctorJsdoc.params[paramName]) {
+          if (right.type === 'Identifier') {
+            const paramName = right.name;
+            const ctorParam = ctorParams.find((p) => p.name === paramName);
+            if (ctorParam && ctorParam.typeAnnotation) {
+              fieldType = this.mapTsType(ctorParam.typeAnnotation.typeAnnotation);
+            } else if (ctorJsdoc.params[paramName]) {
               fieldType = mapToRustType(ctorJsdoc.params[paramName]);
             } else if (
               paramName.toLowerCase().includes('name') ||
               paramName.toLowerCase().includes('title') ||
               paramName.toLowerCase().includes('str') ||
               paramName.toLowerCase().includes('owner') ||
-              paramName.toLowerCase().includes('msg')
+              paramName.toLowerCase().includes('msg') ||
+              paramName.toLowerCase().includes('customer') ||
+              paramName.toLowerCase().includes('user') ||
+              paramName.toLowerCase().includes('email') ||
+              paramName.toLowerCase().includes('text') ||
+              paramName.toLowerCase().includes('desc') ||
+              paramName.toLowerCase().includes('author') ||
+              paramName.toLowerCase().includes('buyer')
             ) {
               fieldType = 'String';
             } else {
               fieldType = this.defaultNumberType;
             }
-          } else if (stmt.expression.right.type === 'StringLiteral') {
+          } else if (right.type === 'StringLiteral') {
             fieldType = 'String';
-          } else if (stmt.expression.right.type === 'BooleanLiteral') {
+          } else if (right.type === 'BooleanLiteral') {
             fieldType = 'bool';
-          } else if (stmt.expression.right.type === 'NumericLiteral') {
-            fieldType = Number.isInteger(stmt.expression.right.value) ? this.defaultNumberType : 'f64';
+          } else if (right.type === 'NumericLiteral') {
+            fieldType = Number.isInteger(right.value) ? this.defaultNumberType : 'f64';
+          } else if (right.type === 'MemberExpression') {
+            const objName = right.object ? right.object.name : null;
+            if (objName && (this.enums.has(objName) || /^[A-Z]/.test(objName))) {
+              fieldType = objName;
+            }
           }
 
           fields.set(fieldName, fieldType);
@@ -542,7 +625,11 @@ export class RustEmitter {
       if (ctor) {
         const ctorParamDecls = ctorParams.map((p) => {
           const pName = p.name;
-          let pType = ctorJsdoc.params[pName] ? mapToRustType(ctorJsdoc.params[pName]) : (fields.get(pName) || this.defaultNumberType);
+          let pType = p.typeAnnotation
+            ? this.mapTsType(p.typeAnnotation.typeAnnotation)
+            : (ctorJsdoc.params[pName]
+                ? mapToRustType(ctorJsdoc.params[pName])
+                : (fields.get(pName) || this.defaultNumberType));
           return `${pName}: ${pType}`;
         }).join(', ');
 
@@ -554,8 +641,10 @@ export class RustEmitter {
               const hasParam = ctorParams.some((p) => p.name === name);
               if (hasParam) {
                 implCode += `${this.indent()}${name},\n`;
+              } else if (fieldInitializers.has(name)) {
+                implCode += `${this.indent()}${name}: ${this.emit(fieldInitializers.get(name))},\n`;
               } else {
-                const defaultVal = type === 'String' ? 'String::new()' : (type === 'bool' ? 'false' : '0');
+                const defaultVal = type === 'String' ? 'String::new()' : (type === 'bool' ? 'false' : (this.enums.has(type) ? `${type}::Default` : '0'));
                 implCode += `${this.indent()}${name}: ${defaultVal},\n`;
               }
             }
@@ -569,8 +658,12 @@ export class RustEmitter {
           implCode += `${this.indent()}Self {\n`;
           this.withIndent(() => {
             for (const [name, type] of fields.entries()) {
-              const defaultVal = type === 'String' ? 'String::new()' : (type === 'bool' ? 'false' : '0');
-              implCode += `${this.indent()}${name}: ${defaultVal},\n`;
+              if (fieldInitializers.has(name)) {
+                implCode += `${this.indent()}${name}: ${this.emit(fieldInitializers.get(name))},\n`;
+              } else {
+                const defaultVal = type === 'String' ? 'String::new()' : (type === 'bool' ? 'false' : '0');
+                implCode += `${this.indent()}${name}: ${defaultVal},\n`;
+              }
             }
           });
           implCode += `${this.indent()}}\n`;
@@ -589,7 +682,11 @@ export class RustEmitter {
 
         const methodParams = method.params.map((p) => {
           const pName = p.name;
-          const pType = methodJsdoc.params[pName] ? mapToRustType(methodJsdoc.params[pName]) : this.defaultNumberType;
+          const pType = p.typeAnnotation
+            ? this.mapTsType(p.typeAnnotation.typeAnnotation)
+            : (methodJsdoc.params[pName]
+                ? mapToRustType(methodJsdoc.params[pName])
+                : this.defaultNumberType);
           return `${pName}: ${pType}`;
         });
 
@@ -598,8 +695,12 @@ export class RustEmitter {
         let returnClause = '';
         if (methodJsdoc.returns && methodJsdoc.returns !== 'void') {
           returnClause = ` -> ${mapToRustType(methodJsdoc.returns, true)}`;
+        } else if (method.returnType) {
+          const ret = this.mapTsType(method.returnType.typeAnnotation);
+          if (ret) returnClause = ` -> ${ret}`;
         } else if (this.hasReturnWithVal(method.body)) {
-          returnClause = ` -> ${this.defaultNumberType}`;
+          const inferred = this.inferBlockReturnType(method.body);
+          returnClause = ` -> ${inferred || this.defaultNumberType}`;
         }
 
         implCode += `${this.indent()}pub fn ${rustMethodName}(${allParams})${returnClause} `;
@@ -624,7 +725,11 @@ export class RustEmitter {
 
           const methodParams = method.params.map((p) => {
             const pName = p.name;
-            const pType = methodJsdoc.params[pName] ? mapToRustType(methodJsdoc.params[pName]) : this.defaultNumberType;
+            const pType = p.typeAnnotation
+              ? this.mapTsType(p.typeAnnotation.typeAnnotation)
+              : (methodJsdoc.params[pName]
+                  ? mapToRustType(methodJsdoc.params[pName])
+                  : this.defaultNumberType);
             return `${pName}: ${pType}`;
           });
           const allParams = [selfParam, ...methodParams].join(', ');
@@ -632,8 +737,12 @@ export class RustEmitter {
           let returnClause = '';
           if (methodJsdoc.returns && methodJsdoc.returns !== 'void') {
             returnClause = ` -> ${mapToRustType(methodJsdoc.returns, true)}`;
+          } else if (method.returnType) {
+            const ret = this.mapTsType(method.returnType.typeAnnotation);
+            if (ret) returnClause = ` -> ${ret}`;
           } else if (this.hasReturnWithVal(method.body)) {
-            returnClause = ` -> String`;
+            const inferred = this.inferBlockReturnType(method.body);
+            returnClause = inferred ? ` -> ${inferred}` : ` -> String`;
           }
 
           implCode += `${this.indent()}fn ${rustMethodName}(${allParams})${returnClause} `;
@@ -776,8 +885,12 @@ export class RustEmitter {
     if (!isMain && jsdoc.returns && jsdoc.returns !== 'void') {
       const rustRet = mapToRustType(jsdoc.returns, true);
       returnClause = ` -> ${rustRet}`;
+    } else if (!isMain && node.returnType) {
+      const ret = this.mapTsType(node.returnType.typeAnnotation);
+      if (ret) returnClause = ` -> ${ret}`;
     } else if (!isMain && !jsdoc.returns && this.hasReturnWithVal(node.body)) {
-      returnClause = ` -> ${this.defaultNumberType}`;
+      const inferred = this.inferBlockReturnType(node.body);
+      returnClause = ` -> ${inferred || this.defaultNumberType}`;
     }
 
     let tokioAttribute = '';
@@ -795,10 +908,26 @@ export class RustEmitter {
   }
 
   hasReturnWithVal(blockNode) {
-    if (!blockNode || !blockNode.body) return false;
-    return blockNode.body.some(
-      (stmt) => stmt.type === 'ReturnStatement' && stmt.argument !== null
-    );
+    if (!blockNode) return false;
+    let found = false;
+    const scan = (node) => {
+      if (!node || typeof node !== 'object' || found) return;
+      if (node.type === 'ReturnStatement' && node.argument !== null) {
+        found = true;
+        return;
+      }
+      if (node !== blockNode && (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression')) {
+        return;
+      }
+      for (const k of Object.keys(node)) {
+        if (k === 'leadingComments' || k === 'trailingComments') continue;
+        const child = node[k];
+        if (Array.isArray(child)) child.forEach(scan);
+        else if (child && typeof child === 'object') scan(child);
+      }
+    };
+    scan(blockNode);
+    return found;
   }
 
   emitBlockStatement(node) {
@@ -1129,8 +1258,8 @@ export class RustEmitter {
     if (
       !node.computed &&
       node.object.type === 'Identifier' &&
-      this.enums &&
-      this.enums.has(node.object.name)
+      ((this.enums && this.enums.has(node.object.name)) ||
+       (/^[A-Z]/.test(node.object.name) && /^[A-Z]/.test(node.property.name)))
     ) {
       return `${node.object.name}::${node.property.name}`;
     }
