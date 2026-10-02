@@ -13,6 +13,10 @@ export class RustEmitter {
     this.signatures = new Map(); // fnName -> Array<{ name: string, type: string, isMut: boolean, isStruct: boolean }>
     this.structs = new Map();    // structName -> Array<{ name: string, type: string }>
     this.rootAst = null;
+    this.needThread = false;
+    this.needDuration = false;
+    this.needMpsc = false;
+    this.needArcMutex = false;
   }
 
   indent() {
@@ -254,9 +258,25 @@ export class RustEmitter {
       case 'Identifier':
         return node.name;
 
+      case 'ArrowFunctionExpression':
+      case 'FunctionExpression':
+        return this.emitClosure(node);
+
       default:
         console.warn(`[js-to-rust] Unsupported AST node: ${node.type}`);
         return `/* Unsupported: ${node.type} */`;
+    }
+  }
+
+  emitClosure(node, isMove = true) {
+    const params = node.params.map((p) => p.name || this.emit(p)).join(', ');
+    const movePrefix = isMove ? 'move ' : '';
+    if (node.body.type === 'BlockStatement') {
+      const body = this.emit(node.body);
+      return `${movePrefix}|${params}| ${body}`;
+    } else {
+      const expr = this.emit(node.body);
+      return `${movePrefix}|${params}| { ${expr} }`;
     }
   }
 
@@ -286,7 +306,16 @@ export class RustEmitter {
   emitProgram(node) {
     this.collectSignatures(node, this.rootAst);
 
+    const bodyOutput = node.body.map((stmt) => this.emit(stmt)).join('\n\n') + '\n';
+
     let output = '';
+
+    // Standard Library imports for Concurrency
+    if (this.needThread) output += 'use std::thread;\n';
+    if (this.needDuration) output += 'use std::time::Duration;\n';
+    if (this.needMpsc) output += 'use std::sync::mpsc;\n';
+    if (this.needArcMutex) output += 'use std::sync::{Arc, Mutex};\n';
+    if (output) output += '\n';
 
     // 1. Emit generated Rust Structs from JSDoc @typedef
     for (const [name, props] of this.structs.entries()) {
@@ -298,7 +327,7 @@ export class RustEmitter {
     }
 
     // 2. Emit functions and other statements
-    output += node.body.map((stmt) => this.emit(stmt)).join('\n\n') + '\n';
+    output += bodyOutput;
     return output;
   }
 
@@ -346,7 +375,13 @@ export class RustEmitter {
   emitVariableDeclaration(node) {
     const isConst = node.kind === 'const';
     const decls = node.declarations.map((decl) => {
-      const varName = decl.id.name;
+      let varName = '';
+      if (decl.id.type === 'ArrayPattern') {
+        const elements = decl.id.elements.map((el) => el.name || this.emit(el)).join(', ');
+        varName = `(${elements})`;
+      } else {
+        varName = decl.id.name;
+      }
       const mutPrefix = isConst ? 'let ' : 'let mut ';
       const initVal = decl.init ? ` = ${this.emit(decl.init)}` : '';
       return `${this.indent()}${mutPrefix}${varName}${initVal};`;
@@ -487,7 +522,7 @@ export class RustEmitter {
       if (method === 'min') return `std::cmp::min(${args[0]}, ${args[1]})`;
     }
 
-    // 3. Array methods: .push(), .pop(), .includes()
+    // 3. Array & Concurrency methods: .push(), .pop(), .includes(), .send(), .recv(), .join(), .lock()
     if (node.callee.type === 'MemberExpression') {
       const obj = this.emit(node.callee.object);
       const method = node.callee.property.name;
@@ -502,6 +537,65 @@ export class RustEmitter {
       if (method === 'includes') {
         const val = this.emit(node.arguments[0]);
         return `${obj}.contains(&${val})`;
+      }
+      if (method === 'send') {
+        const val = this.emit(node.arguments[0]);
+        return `${obj}.send(${val}).unwrap()`;
+      }
+      if (method === 'recv') {
+        return `${obj}.recv().unwrap()`;
+      }
+      if (method === 'join') {
+        return `${obj}.join().unwrap()`;
+      }
+      if (method === 'lock') {
+        return `${obj}.lock().unwrap()`;
+      }
+    }
+
+    // 4. Concurrency: thread.spawn / Thread.spawn / thread.sleep
+    if (
+      node.callee.type === 'MemberExpression' &&
+      (node.callee.object.name === 'thread' || node.callee.object.name === 'Thread')
+    ) {
+      const method = node.callee.property.name;
+      if (method === 'spawn') {
+        this.needThread = true;
+        const fnArg = this.emit(node.arguments[0]);
+        return `thread::spawn(${fnArg})`;
+      }
+      if (method === 'sleep') {
+        this.needThread = true;
+        this.needDuration = true;
+        const ms = this.emit(node.arguments[0]);
+        return `thread::sleep(Duration::from_millis(${ms}))`;
+      }
+    }
+
+    // 5. Concurrency: mpsc.channel() / createChannel() / channel()
+    if (
+      (node.callee.type === 'MemberExpression' && node.callee.object.name === 'mpsc' && node.callee.property.name === 'channel') ||
+      (node.callee.type === 'Identifier' && (node.callee.name === 'createChannel' || node.callee.name === 'channel'))
+    ) {
+      this.needMpsc = true;
+      return `mpsc::channel()`;
+    }
+
+    // 6. Concurrency: Arc.new / Arc.clone / Mutex.new
+    if (node.callee.type === 'MemberExpression' && node.callee.object.name === 'Arc') {
+      this.needArcMutex = true;
+      const method = node.callee.property.name;
+      if (method === 'new') {
+        return `Arc::new(${this.emit(node.arguments[0])})`;
+      }
+      if (method === 'clone') {
+        return `Arc::clone(&${this.emit(node.arguments[0])})`;
+      }
+    }
+    if (node.callee.type === 'MemberExpression' && node.callee.object.name === 'Mutex') {
+      this.needArcMutex = true;
+      if (node.callee.property.name === 'new') {
+        return `Mutex::new(${this.emit(node.arguments[0])})`;
       }
     }
 

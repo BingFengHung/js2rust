@@ -77,6 +77,29 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(project['src/utils/math.rs'].includes('pub fn add'), 'src/utils/math.rs contains compiled add function');
 }
 
+// Test 5: Fearless Concurrency (thread.spawn, mpsc channel, closure, join)
+{
+  const js = `
+  function main() {
+    const [tx, rx] = mpsc.channel();
+    const handle = thread.spawn(() => {
+      tx.send(42);
+    });
+    const result = rx.recv();
+    handle.join();
+    console.log("Result:", result);
+  }
+  `;
+  const rust = transpile(js);
+  assert(rust.includes('use std::thread;'), 'Imports std::thread');
+  assert(rust.includes('use std::sync::mpsc;'), 'Imports std::sync::mpsc');
+  assert(rust.includes('let (tx, rx) = mpsc::channel();'), 'Destructures channel tuple let (tx, rx)');
+  assert(rust.includes('thread::spawn(move ||'), 'Spawns thread with move closure');
+  assert(rust.includes('tx.send(42).unwrap();'), 'Sends message on channel with unwrap');
+  assert(rust.includes('rx.recv().unwrap();'), 'Receives message with unwrap');
+  assert(rust.includes('handle.join().unwrap();'), 'Joins thread handle with unwrap');
+}
+
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);
 if (failed > 0) {
   process.exit(1);
