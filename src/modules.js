@@ -13,6 +13,27 @@ function normalizePath(p) {
 }
 
 /**
+ * Automatically finds the main entry point file from a set of files
+ */
+function findMainFilename(files) {
+  const keys = Object.keys(files);
+  // 1. Look for main.js or src/main.js
+  const main = keys.find((k) => /(^|\/)main\.(js|ts|mjs)$/i.test(k));
+  if (main) return main;
+
+  // 2. Look for index.js or src/index.js
+  const index = keys.find((k) => /(^|\/)index\.(js|ts|mjs)$/i.test(k));
+  if (index) return index;
+
+  // 3. Look for file containing `function main(`
+  const withMainFn = keys.find((k) => /function\s+main\s*\(/.test(files[k]));
+  if (withMainFn) return withMainFn;
+
+  // 4. Default to first key
+  return keys[0];
+}
+
+/**
  * Transpiles multiple JavaScript files (including folders) into a single cohesive Rust program.
  * @param {Record<string, string>} files - Map of filename/path to JS source code.
  * @param {object} [options] - Compiler options.
@@ -25,12 +46,10 @@ export function transpileMultiModules(files, options = {}) {
     return '';
   }
 
-  // Find main entry point (main.js or src/main.js)
-  const mainFilename =
-    filenames.find((f) => normalizePath(f) === 'main.js') || filenames[0];
+  // Find main entry point (main.js, index.js, or file with function main())
+  const mainFilename = findMainFilename(files);
 
   let mainRust = '';
-  let importsRust = '';
 
   // Build hierarchical module tree
   const rootModule = { children: {} };
@@ -40,24 +59,15 @@ export function transpileMultiModules(files, options = {}) {
     const code = files[rawPath];
 
     if (rawPath === mainFilename) {
+      // Transpile main file (this will automatically convert `import` to `use path::item;`)
       mainRust = transpile(code, options);
-
-      // Convert ES module imports to Rust `use` statements
-      // e.g. import { add } from './utils/math.js'; -> use utils::math::add;
-      const importRegex = /import\s+\{([^}]+)\}\s+from\s+['"]\.\/([^'"]+)['"]/g;
-      let match;
-      while ((match = importRegex.exec(code)) !== null) {
-        const symbols = match[1].split(',').map((s) => s.trim()).filter(Boolean);
-        const importPath = normalizePath(match[2]).replace(/\.(js|ts|mjs)$/, '');
-        const rustModPath = importPath.split('/').map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_')).join('::');
-
-        for (const sym of symbols) {
-          importsRust += `use ${rustModPath}::${sym};\n`;
-        }
-      }
     } else {
-      // It's a module file (may be in a folder like utils/math.js)
-      const parts = norm.replace(/\.(js|ts|mjs)$/, '').split('/').map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
+      // It's a module file (may be inside nested folders like utils/math.js)
+      const parts = norm
+        .replace(/\.(js|ts|mjs)$/, '')
+        .split('/')
+        .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
+
       const compiledCode = transpile(code, options);
 
       // Insert into module tree
@@ -101,9 +111,6 @@ export function transpileMultiModules(files, options = {}) {
   let finalOutput = '';
   if (modulesRust.trim()) {
     finalOutput += `// === Modules & Nested Folders ===\n${modulesRust}`;
-  }
-  if (importsRust) {
-    finalOutput += `// === Module Imports ===\n${importsRust}\n`;
   }
   finalOutput += `// === Main Application ===\n${mainRust}`;
 

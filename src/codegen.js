@@ -262,16 +262,22 @@ export class RustEmitter {
 
   emitImportDeclaration(node) {
     const rawPath = node.source.value;
-    const modName = rawPath.replace(/^\.\//, '').replace(/\.(js|ts|mjs)$/, '');
+    const cleanPath = rawPath
+      .replace(/^\.\//, '')
+      .replace(/^src\//, '')
+      .replace(/\.(js|ts|mjs)$/, '')
+      .split('/')
+      .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'))
+      .join('::');
 
     const lines = [];
     for (const spec of node.specifiers) {
       if (spec.type === 'ImportSpecifier') {
-        lines.push(`use ${modName}::${spec.local.name};`);
+        lines.push(`use ${cleanPath}::${spec.local.name};`);
       } else if (spec.type === 'ImportNamespaceSpecifier') {
-        lines.push(`use ${modName}::*;`);
+        lines.push(`use ${cleanPath}::*;`);
       } else if (spec.type === 'ImportDefaultSpecifier') {
-        lines.push(`use ${modName}::${spec.local.name};`);
+        lines.push(`use ${cleanPath}::${spec.local.name};`);
       }
     }
     return lines.join('\n');
