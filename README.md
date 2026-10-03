@@ -46,6 +46,17 @@ npm run playground
 * **右側**：即時看到轉譯出的 Rust 語法，並提供 **「▶ 在線編譯並執行 Rust」** 按鈕！
 * **直接連線官方 Rust Playground**：自動回傳編譯狀態、`stdout` 執行輸出與 `stderr` 編譯訊息。
 
+### 專案說明網頁（GitHub Pages）
+
+`docs/` 包含靜態專案網站，可切換 JS／Rust 範例、查看支援範圍與快速開始。
+
+```bash
+npm run docs:build
+npm run docs:serve
+```
+
+開啟 `http://localhost:4173`。部署及範例驗證方式見 [docs/README.md](docs/README.md)。網站範例的 Rust 由專案轉譯器生成；`npm run docs:verify` 會實際編譯、執行並與 JavaScript 結果對照。
+
 ### 2. 命令列 CLI 執行
 
 ```bash

@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f3ed" />
+    <meta
+      name="description"
+      content="js2rust：將具有明確型別的 JavaScript 子集轉譯成 Rust。探索真實程式碼對照、方法支援與本機 Playground。"
+    />
+    <meta
+      property="og:title"
+      content="js2rust — 用 JavaScript 思考，讓 Rust 執行"
+    />
+    <meta
+      property="og:description"
+      content="從熟悉的 JavaScript 出發，探索 Rust 程式碼、借用與原生執行。"
+    />
+    <meta property="og:type" content="website" />
+    <title>js2rust — 用 JavaScript 思考，讓 Rust 執行</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="./examples-data.js"></script>
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳至主要內容</a>
+    <header class="site-header">
+      <div class="wrap header-inner">
+        <a class="brand" href="#" aria-label="js2rust 首頁"
+          ><span class="brand-mark" aria-hidden="true">j/r</span
+          ><span
+            >js<span class="brand-two">2</span>rust<span class="version"
+              >0.1</span
+            ></span
+          ></a
+        >
+        <button
+          class="menu-toggle"
+          aria-expanded="false"
+          aria-controls="navigation"
+          aria-label="開啟導覽選單"
+        >
+          選單 <span aria-hidden="true">＋</span>
+        </button>
+        <nav id="navigation" aria-label="主要導覽">
+          <a href="#examples">程式碼對照</a><a href="#support">支援範圍</a
+          ><a href="#start">開始使用</a>
+          <a class="repo-link" href="https://github.com/BingFengHung/js2rust"
+            >GitHub <span aria-hidden="true">↗</span></a
+          >
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="status-dot"></span> A JAVASCRIPT TO RUST TRANSPILER
+          </p>
+          <h1 id="hero-title">
+            用 JavaScript<br />思考。<br /><span>讓 Rust 執行。</span>
+          </h1>
+          <p class="hero-description">
+            從熟悉的語法出發，將演算法與資料處理轉譯成
+            Rust。看懂產出的程式碼，再親手編譯、驗證與執行。
+          </p>
+          <div class="hero-actions">
+            <a class="button button-dark" href="#start"
+              >開始使用 <span aria-hidden="true">↗</span></a
+            ><a class="text-link" href="#examples"
+              >看看轉譯結果 <span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <p class="hero-note">Node.js 開發 · Rust 輸出 · 本機 Playground</p>
+        </div>
+        <div class="hero-visual" aria-label="JavaScript 轉譯為 Rust 的概念圖">
+          <div class="visual-top">
+            <span>ONE IDEA. TWO LANGUAGES.</span><span>01 / 02</span>
+          </div>
+          <div class="language-pair">
+            <span class="js-symbol">js</span
+            ><svg class="flow-arrow" viewBox="0 0 90 50" aria-hidden="true">
+              <path d="M4 25H80M62 7l18 18-18 18" /></svg
+            ><span class="rust-symbol"
+              >rs<span class="rust-ring" aria-hidden="true"></span
+            ></span>
+          </div>
+          <div class="hero-code">
+            <div class="code-label"><span class="mini-dot"></span> main.js</div>
+            <pre><code><span class="syntax-keyword">const</span> numbers = [1, 2, 3];
+<span class="syntax-keyword">const</span> doubled = numbers.<span class="syntax-function">map</span>(
+  value =&gt; value * 2
+);
+console.<span class="syntax-function">log</span>(doubled);</code></pre>
+            <div class="code-result">
+              <span>OUTPUT</span><code>[2, 4, 6]</code
+              ><span class="result-check">✓ 同一個結果</span>
+            </div>
+          </div>
+          <div class="visual-bottom">
+            <span class="tiny-cross" aria-hidden="true">＋</span
+            ><span>熟悉的輸入。可閱讀的輸出。</span
+            ><span aria-hidden="true">＋</span>
+          </div>
+        </div>
+      </section>
+      <div class="principles wrap">
+        <span><span class="principle-number">01</span> 保留方法與運算語意</span
+        ><span><span class="principle-number">02</span> 明確的型別與借用</span
+        ><span
+          ><span class="principle-number">03</span> 真實編譯與執行驗證</span
+        >
+      </div>
+
+      <section
+        class="section wrap"
+        id="examples"
+        aria-labelledby="examples-title"
+      >
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">01 / CODE IN TRANSLATION</p>
+            <h2 id="examples-title">
+              你寫的，<br class="mobile-break" />就是起點。
+            </h2>
+          </div>
+          <p>
+            切換範例，看看同一個想法如何變成 Rust。<br />以下程式碼由專案轉譯器產生。
+          </p>
+        </div>
+        <div class="demo-selector" role="group" aria-label="選擇程式範例">
+          <button
+            class="example-button active"
+            data-example="arrays"
+            aria-pressed="true"
+          >
+            01 <span>map / reduce</span></button
+          ><button
+            class="example-button"
+            data-example="strings"
+            aria-pressed="false"
+          >
+            02 <span>split / join</span></button
+          ><button
+            class="example-button"
+            data-example="splice"
+            aria-pressed="false"
+          >
+            03 <span>splice</span></button
+          ><button
+            class="example-button"
+            data-example="numbers"
+            aria-pressed="false"
+          >
+            04 <span>數值運算</span>
+          </button>
+        </div>
+        <div class="code-comparison">
+          <article class="code-pane js-pane">
+            <div class="pane-header">
+              <span
+                ><b class="language-badge badge-js">JS</b> JavaScript
+                <span class="file-name">main.js</span></span
+              ><button
+                class="copy-button"
+                data-copy="javascript"
+                aria-label="複製 JavaScript 範例"
+              >
+                複製 <span aria-hidden="true">⧉</span>
+              </button>
+            </div>
+            <pre
+              tabindex="0"
+              aria-label="JavaScript 範例程式碼"
+            ><code id="javascript-code">function main() {
+  const numbers = [1, 2, 3];
+  const doubled = numbers.map(value =&gt; value * 2);
+  const total = doubled.reduce((sum, value) =&gt; sum + value, 0);
+  console.log(doubled);
+  console.log(total);
+}</code></pre>
+          </article>
+          <article class="code-pane rust-pane">
+            <div class="pane-header">
+              <span
+                ><b class="language-badge badge-rust">RS</b> Rust
+                <span class="file-name">main.rs</span></span
+              ><button
+                class="copy-button"
+                data-copy="rust"
+                aria-label="複製完整 Rust 範例"
+              >
+                複製 <span aria-hidden="true">⧉</span>
+              </button>
+            </div>
+            <pre
+              tabindex="0"
+              aria-label="Rust 範例程式碼"
+            ><code id="rust-code">fn main() {
+    let numbers: Vec&lt;i64&gt; = vec![1, 2, 3];
+    let doubled: Vec&lt;i64&gt; = numbers.iter().cloned()
+        .map(|value| { value * 2 }).collect();
+    let total = doubled.iter().cloned()
+        .fold(0, |sum, value| { sum + value });
+    println!("{:?}", doubled);
+    println!("{}", total);
+}</code></pre>
+          </article>
+        </div>
+        <div class="demo-footer">
+          <p id="example-description">
+            map 產生新陣列；reduce 累加結果，原陣列仍可使用。
+          </p>
+          <button id="full-rust" class="text-link" aria-pressed="false">
+            展開完整 Rust <span aria-hidden="true">＋</span>
+          </button>
+        </div>
+        <div class="output-strip">
+          <span><span class="status-dot"></span> 預期執行結果</span>
+          <pre id="example-output">
+[2, 4, 6]
+12</pre
+          >
+          <span class="output-caption"
+            >在本機測試中比較 Node.js 與 Rust 輸出</span
+          >
+        </div>
+        <noscript
+          ><p class="notice">
+            開啟 JavaScript 即可切換完整範例及複製程式碼。目前顯示 map / reduce
+            說明範例。
+          </p></noscript
+        >
+      </section>
+
+      <section class="feature-band">
+        <div class="wrap">
+          <p class="eyebrow">BUILT AROUND THE WAY YOU THINK</p>
+          <div class="feature-grid">
+            <article>
+              <span class="feature-icon" aria-hidden="true">{ }</span>
+              <h3>讓型別浮現</h3>
+              <p>
+                使用 JSDoc、TypeScript 註記與呼叫方式推導型別，產生 Rust
+                的參數與回傳宣告。
+              </p>
+            </article>
+            <article>
+              <span class="feature-icon" aria-hidden="true">&amp;</span>
+              <h3>讓資料繼續可用</h3>
+              <p>
+                依使用方式選擇借用與複製，讓 map、slice
+                等操作完成後，原陣列仍能繼續使用。
+              </p>
+            </article>
+            <article>
+              <span class="feature-icon" aria-hidden="true">↳</span>
+              <h3>從一個檔案到專案</h3>
+              <p>
+                以相對匯入組織模組，匯出合併 Rust 程式或完整 Cargo
+                專案，接續本機開發。
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="section wrap"
+        id="support"
+        aria-labelledby="support-title"
+      >
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">02 / KNOW THE BOUNDARIES</p>
+            <h2 id="support-title">清楚知道，<br />哪些能做到。</h2>
+          </div>
+          <p>
+            聚焦具有明確型別的 JavaScript 子集。<br />支援範圍以實際編譯與執行測試為準。
+          </p>
+        </div>
+        <div class="support-layout">
+          <div class="support-list">
+            <article>
+              <div>
+                <span class="support-index">01</span>
+                <h3>演算法與控制流程</h3>
+              </div>
+              <p>函式、字面值預設參數、運算、條件、迴圈、switch。</p>
+              <span class="support-status">已驗證</span>
+            </article>
+            <article>
+              <div>
+                <span class="support-index">02</span>
+                <h3>陣列與字串</h3>
+              </div>
+              <p>
+                map、reduce、filter、forEach、some、every、find、slice、splice、push、pop、includes、indexOf、join
+                與字串 split。
+              </p>
+              <span class="support-status">已驗證</span>
+            </article>
+            <article>
+              <div>
+                <span class="support-index">03</span>
+                <h3>型別、物件與模組</h3>
+              </div>
+              <p>
+                JSDoc 結構體、類別、TS number、enum、相對具名／預設函式匯入。
+              </p>
+              <span class="support-status">範本與案例驗證</span>
+            </article>
+            <article>
+              <div>
+                <span class="support-index">04</span>
+                <h3>Rust 進階範本</h3>
+              </div>
+              <p>
+                thread、channel、Arc / Mutex、Tokio async、trait 與 lifetime
+                的指定寫法。
+              </p>
+              <span class="support-status">範本已執行</span>
+            </article>
+          </div>
+          <aside class="boundary-card">
+            <span class="boundary-label">CURRENT SCOPE</span>
+            <h3>從明確的子集，<br />一步步擴展。</h3>
+            <p>這個工具目前無法直接執行完整 Node.js 應用程式。</p>
+            <ul>
+              <li>陣列使用相同型別的元素。</li>
+              <li>方法回呼使用內嵌函式；不支援修改來源陣列。</li>
+              <li>split 不支援正規表示式；空分隔符遇非 BMP 字元會明確失敗。</li>
+              <li>動態型別、完整數值／UTF-16 語意仍有限制。</li>
+              <li>Node.js、npm 套件及 HTTP Server API 尚未對接。</li>
+            </ul>
+            <a
+              class="text-link"
+              href="https://github.com/BingFengHung/js2rust#已驗證的方法與範圍"
+              >閱讀完整支援說明 <span aria-hidden="true">↗</span></a
+            >
+          </aside>
+        </div>
+      </section>
+
+      <section class="validation wrap" aria-labelledby="validation-title">
+        <div>
+          <p class="eyebrow">TEST THE RESULT, NOT JUST THE OUTPUT</p>
+          <h2 id="validation-title">產生程式碼，<br />也驗證執行結果。</h2>
+          <p>
+            回歸測試會實際編譯產出的 Rust，<br />再與 Node.js 的執行結果對照。
+          </p>
+          <a
+            class="text-link"
+            href="https://github.com/BingFengHung/js2rust/actions"
+            >查看 CI 執行紀錄 <span aria-hidden="true">↗</span></a
+          >
+        </div>
+        <div class="validation-steps">
+          <div>
+            <span>01</span>
+            <p>執行 JavaScript <small>取得預期輸出</small></p>
+            <b aria-hidden="true">↓</b>
+          </div>
+          <div>
+            <span>02</span>
+            <p>轉譯並編譯 Rust <small>捕捉編譯與執行錯誤</small></p>
+            <b aria-hidden="true">↓</b>
+          </div>
+          <div>
+            <span>03</span>
+            <p>比較兩邊的結果 <small>涵蓋空值、邊界與再次使用</small></p>
+            <b aria-hidden="true">✓</b>
+          </div>
+        </div>
+      </section>
+
+      <section class="section wrap" id="start" aria-labelledby="start-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">03 / YOUR FIRST TRANSLATION</p>
+            <h2 id="start-title">從第一段<br />程式碼開始。</h2>
+          </div>
+          <p>
+            需要 Node.js 與 npm。<br />編譯及執行 Rust 另外需要 Rust 工具鏈。
+          </p>
+        </div>
+        <div class="start-grid">
+          <article class="start-card">
+            <span class="step-label">STEP 01</span>
+            <h3>取得並安裝</h3>
+            <p>下載專案，在終端機進入專案目錄。</p>
+            <div class="terminal">
+              <button
+                class="copy-button"
+                data-command="install"
+                aria-label="複製安裝指令"
+              >
+                複製 ⧉
+              </button>
+              <pre
+                id="install-command"
+              ><code>git clone https://github.com/BingFengHung/js2rust.git
+cd js2rust
+npm ci</code></pre>
+            </div>
+            <p class="small-note">
+              若儲存庫為私人，請先登入具有權限的 GitHub 帳號。
+            </p>
+          </article>
+          <article class="start-card">
+            <span class="step-label">STEP 02</span>
+            <h3>打開本機 Playground</h3>
+            <p>在瀏覽器編輯 JS，即時查看 Rust 並匯出專案。</p>
+            <div class="terminal">
+              <button
+                class="copy-button"
+                data-command="playground"
+                aria-label="複製 Playground 指令"
+              >
+                複製 ⧉
+              </button>
+              <pre id="playground-command"><code>npm run playground
+
+# 開啟 http://localhost:3000</code></pre>
+            </div>
+            <p class="small-note">
+              在線執行會將 Rust 程式碼送至官方 Rust Playground。
+            </p>
+          </article>
+        </div>
+        <details class="more-commands">
+          <summary>
+            偏好命令列？查看 CLI 與測試指令 <span aria-hidden="true">＋</span>
+          </summary>
+          <div class="command-columns">
+            <div>
+              <h4>匯出 Rust</h4>
+              <pre><code>npm start -- test/example.js -o output.rs
+rustc --edition=2021 output.rs</code></pre>
+              <p>執行產出的二進位程式；使用 Tokio 的專案請以 Cargo 編譯。</p>
+            </div>
+            <div>
+              <h4>驗證專案</h4>
+              <pre><code>npm test
+npm run test:rust</code></pre>
+              <p>test:rust 需要 rustc 與 cargo；缺少工具會明確失敗。</p>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="closing wrap">
+        <div>
+          <p class="eyebrow">EXPLORE. TRANSLATE. UNDERSTAND.</p>
+          <h2>下一個想法，<br />從這裡開始。</h2>
+        </div>
+        <a
+          class="button button-dark"
+          href="https://github.com/BingFengHung/js2rust"
+          >探索 GitHub 專案 <span aria-hidden="true">↗</span></a
+        >
+      </section>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="brand" href="#"
+        ><span class="brand-mark" aria-hidden="true">j/r</span
+        ><span>js2rust</span></a
+      >
+      <p>Built by BingFengHung · JavaScript → Rust</p>
+      <div>
+        <a href="https://github.com/BingFengHung/js2rust/blob/main/README.md"
+          >文件 ↗</a
+        ><a href="https://github.com/BingFengHung/js2rust/issues"
+          >回報問題 ↗</a
+        >
+      </div>
+    </footer>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
