@@ -11,7 +11,10 @@
     "start": "node src/cli.js",
     "test": "node test/run.js && node test/verify_templates.js",
     "test:rust": "node test/rust.js",
-    "playground": "node playground/server.js"
+    "playground": "node playground/server.js",
+    "docs:build": "node scripts/build-docs.js",
+    "docs:verify": "node scripts/build-docs.js --verify",
+    "docs:serve": "node scripts/serve-docs.js"
   },
   "keywords": [
     "javascript",

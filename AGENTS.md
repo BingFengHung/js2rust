@@ -13,6 +13,7 @@
 - `src/runtime.js`：產出的 Rust 所需的 JavaScript 語意輔助函式；不得引入 Node.js 執行環境依賴。
 - `src/cli.js`：CLI；錯誤必須以非零結束碼回報。
 - `playground/`：編輯器、範本、專案備份／匯出及 Node.js 開發伺服器。
+- `docs/`、`scripts/build-docs.js`：GitHub Pages 說明頁與由轉譯器生成的範例；修改範例後執行 `npm run docs:build` 與 `npm run docs:verify`，檢查手機／桌面及相對資產路徑。
 - `test/`：字串／診斷回歸、真實 Rust 編譯與 JavaScript/Rust 結果對照。
 
 ## 開發規則
