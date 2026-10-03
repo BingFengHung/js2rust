@@ -2,9 +2,9 @@
  * Main Entry Point for js-to-rust
  */
 
-import { parse } from '@babel/parser';
 import { RustEmitter } from './codegen.js';
 import { transpileMultiModules, generateRustProject } from './modules.js';
+import { analyzeJavaScript, assertValid } from './validation.js';
 
 /**
  * Transpiles JavaScript source code to Rust source code.
@@ -13,22 +13,15 @@ import { transpileMultiModules, generateRustProject } from './modules.js';
  * @returns {string} - The resulting Rust source code.
  */
 export function transpile(jsCode, options = {}) {
-  // Parse JavaScript with Babel, preserving all comments (needed for JSDoc & typedefs)
-  const ast = parse(jsCode, {
-    sourceType: 'module',
-    allowReturnOutsideFunction: true,
-    plugins: [
-      'classProperties',
-      'numericSeparator',
-      'typescript',
-    ],
-  });
+  const analysis = analyzeJavaScript(jsCode, options);
+  assertValid(analysis);
 
   const emitter = new RustEmitter(options);
-  const rustCode = emitter.emitProgramWithAst(ast);
+  const rustCode = emitter.emitProgramWithAst(analysis.ast);
 
   return rustCode.trim() + '\n';
 }
 
 export { transpileMultiModules, generateRustProject };
+export { validateJavaScript, validateProject, JavaScriptValidationError } from './validation.js';
 export default transpile;

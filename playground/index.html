@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/mode/simple.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/rust/rust.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/toml/toml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
@@ -699,6 +700,14 @@
     .modal-cancel-btn:hover {
       color: var(--text-main);
     }
+    .js-diagnostics { border-top: 1px solid #30363d; padding: 10px 14px; max-height: 180px; overflow: auto; font-size: 12px; }
+    .js-diagnostics summary { cursor: pointer; color: #8b949e; }
+    .diagnostic-item { display: block; width: 100%; text-align: left; background: transparent; border: 0; color: #f85149; padding: 8px 0; cursor: pointer; font: inherit; line-height: 1.7; overflow-wrap: anywhere; }
+    .diagnostic-item.warning { color: #d29922; }
+    .diagnostic-item:focus-visible { outline: 2px solid #58a6ff; }
+    .js-diagnostic-error { text-decoration: underline wavy #f85149; background: #f8514918; }
+    .js-diagnostic-warning { text-decoration: underline wavy #d29922; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -797,6 +806,10 @@
       <div class="editor-container">
         <textarea id="jsInput" spellcheck="false" placeholder="在此輸入你的 JavaScript 演算法..."></textarea>
       </div>
+      <details id="jsDiagnostics" class="js-diagnostics" open>
+        <summary id="jsDiagnosticSummary" role="status" aria-live="polite">等待 JavaScript 檢查</summary>
+        <div id="jsDiagnosticList"></div>
+      </details>
     </div>
 
     <!-- Right: Generated Rust Code & Output -->
@@ -1320,6 +1333,14 @@ function main() {
     let currentRustViewMode = 'files'; // 'files' | 'merged'
     let activeRustFile = 'src/main.rs';
     let debounceTimer = null;
+    let projectRevision = 0;
+    let transpileRequestId = 0;
+    let transpileController = null;
+    let isValidated = false;
+    let isRunning = false;
+    let currentDiagnostics = [];
+    let diagnosticMarks = [];
+    let switchingDiagnostic = false;
 
     // Elements
     const treeView = document.getElementById('treeView');
@@ -1332,6 +1353,8 @@ function main() {
     const transpileStatus = document.getElementById('transpileStatus');
     const templateSelect = document.getElementById('templateSelect');
     const runBtn = document.getElementById('runBtn');
+    const jsDiagnosticSummary = document.getElementById('jsDiagnosticSummary');
+    const jsDiagnosticList = document.getElementById('jsDiagnosticList');
     const runIcon = document.getElementById('runIcon');
     const copyBtn = document.getElementById('copyBtn');
     const execBadge = document.getElementById('execBadge');
@@ -1407,11 +1430,69 @@ function main() {
 
     // CodeMirror change event
     cmEditor.on('change', () => {
+      if (switchingDiagnostic) return;
       files[activeFile] = cmEditor.getValue();
+      projectRevision++;
+      transpileController?.abort();
+      clearGeneratedOutput();
+      showDiagnostics([],'等待 JavaScript 檢查');
       saveToLocalStorage();
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(doTranspile, 250);
     });
+
+    function clearGeneratedOutput() {
+      isValidated = false;
+      currentRustCode = '';
+      currentProjectFiles = {};
+      runBtn.disabled = true;
+      downloadZipBtn.disabled = true;
+      copyBtn.disabled = true;
+      transpileStatus.textContent = '等待 JS 檢查';
+      transpileStatus.style.color = '#8b949e';
+      updateRustView();
+    }
+
+    function markDiagnostics() {
+      diagnosticMarks.forEach(mark => mark.clear());
+      diagnosticMarks = [];
+      for (const item of currentDiagnostics.filter(d => d.filename === activeFile)) {
+        const line = Math.min(Math.max(0, item.line - 1), cmEditor.lineCount() - 1);
+        const column = Math.min(Math.max(0, item.column - 1), cmEditor.getLine(line).length);
+        const endLine = Math.min(Math.max(line, (item.endLine || item.line) - 1), cmEditor.lineCount() - 1);
+        const endColumn = Math.min(Math.max(endLine === line ? column + 1 : 0, (item.endColumn || item.column + 1) - 1), cmEditor.getLine(endLine).length);
+        diagnosticMarks.push(cmEditor.markText({line,ch:column},{line:endLine,ch:endColumn},{className:`js-diagnostic-${item.severity}`,title:item.message}));
+      }
+    }
+
+    function showDiagnostics(diagnostics, summary) {
+      currentDiagnostics = diagnostics;
+      jsDiagnosticSummary.textContent = summary;
+      jsDiagnosticList.replaceChildren();
+      for (const item of diagnostics) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `diagnostic-item ${item.severity}`;
+        const category = item.category === 'compatibility' ? '轉譯支援' : 'JavaScript';
+        button.textContent = `[${item.severity === 'warning' ? '警告' : '錯誤'} · ${category}] ${item.filename}:${item.line}:${item.column} — ${item.message}`;
+        button.addEventListener('click', () => {
+          if (Object.hasOwn(files,item.filename) && activeFile !== item.filename) {
+            activeFile = item.filename;
+            activeFilePath.textContent = activeFile;
+            switchingDiagnostic = true;
+            try { cmEditor.setValue(files[activeFile]); } finally { switchingDiagnostic = false; }
+            renderTree();
+            markDiagnostics();
+          }
+          if (activeFile === item.filename) {
+            cmEditor.setCursor({line:Math.max(0,item.line-1),ch:Math.max(0,item.column-1)});
+            cmEditor.focus();
+          }
+        });
+        jsDiagnosticList.append(button);
+      }
+      markDiagnostics();
+    }
 
     // Update Rust View UI (Files vs Merged, Chips, Content, Syntax Mode)
     function updateRustView() {
@@ -1482,6 +1563,7 @@ function main() {
     });
 
     downloadZipBtn.addEventListener('click', async () => {
+      const revision = projectRevision;
       if (!currentProjectFiles || Object.keys(currentProjectFiles).length === 0) {
         showToast('目前沒有可下載的 Rust 檔案');
         return;
@@ -1494,6 +1576,7 @@ function main() {
         }
 
         const blob = await zip.generateAsync({ type: 'blob' });
+        if (revision !== projectRevision || !isValidated) { showToast('程式碼已變更，請完成新的檢查後再下載。'); return; }
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -1926,31 +2009,50 @@ function main() {
 
     // Transpile all files into Rust
     async function doTranspile() {
+      clearTimeout(debounceTimer);
+      transpileController?.abort();
+      const controller = new AbortController();
+      transpileController = controller;
+      const requestId = ++transpileRequestId;
+      const revision = projectRevision;
+      const snapshot = JSON.stringify(files);
+      clearGeneratedOutput();
       try {
-        transpileStatus.textContent = '轉譯中...';
+        transpileStatus.textContent = 'JS 檢查與轉譯中...';
         transpileStatus.style.color = '#58a6ff';
+        showDiagnostics([],'JavaScript 檢查中…');
 
         const res = await fetch('/api/transpile', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files })
+          body: JSON.stringify({ files }),
+          signal: controller.signal
         });
 
         const data = await res.json();
-        if (data.error) {
-          transpileStatus.textContent = '轉譯語法錯誤';
+        if (requestId !== transpileRequestId || revision !== projectRevision || snapshot !== JSON.stringify(files)) return;
+        if (!res.ok || data.error || data.valid === false) {
+          const diagnostics = data.diagnostics || [];
+          showDiagnostics(diagnostics,`檢查未通過：${diagnostics.filter(d=>d.severity==='error').length} 個錯誤`);
+          transpileStatus.textContent = 'JS 檢查未通過';
           transpileStatus.style.color = '#f85149';
-          currentRustCode = `// 轉譯錯誤:\n// ${data.error}`;
-          currentProjectFiles = { 'src/main.rs': currentRustCode };
-          updateRustView();
+          if (!diagnostics.length) jsDiagnosticSummary.textContent = data.error || '檢查失敗';
         } else {
           currentRustCode = data.rust || '';
           currentProjectFiles = data.projectFiles || {};
+          isValidated = true;
+          runBtn.disabled = isRunning;
+          downloadZipBtn.disabled = false;
+          copyBtn.disabled = false;
+          const warnings = (data.diagnostics || []).filter(d=>d.severity==='warning').length;
+          showDiagnostics(data.diagnostics || [],warnings ? `JavaScript 檢查通過 · ${warnings} 個警告` : 'JavaScript 靜態檢查通過 · 執行結果仍需驗證');
           transpileStatus.textContent = '轉譯完成';
           transpileStatus.style.color = '#3fb950';
           updateRustView();
         }
       } catch (err) {
+        if (err.name === 'AbortError' || requestId !== transpileRequestId || revision !== projectRevision) return;
+        showDiagnostics([],'檢查服務連線失敗，尚未產生 Rust');
         transpileStatus.textContent = '連線失敗';
         transpileStatus.style.color = '#f85149';
       }
@@ -1958,11 +2060,14 @@ function main() {
 
     // Run Rust code via online compiler API
     async function runRustCode() {
-      if (!currentRustCode || currentRustCode.trim() === '') {
-        alert('請先輸入 JavaScript 程式碼以產生 Rust！');
+      if (!isValidated || isRunning || !currentRustCode || currentRustCode.trim() === '') {
+        showToast('請先修正 JavaScript 錯誤並完成檢查。');
         return;
       }
 
+      isRunning = true;
+      const revision = projectRevision;
+      const snapshot = JSON.stringify(files);
       runBtn.disabled = true;
       runIcon.innerHTML = '<span class="spinner"></span>';
       execBadge.className = 'status-tag status-running';
@@ -1986,6 +2091,7 @@ function main() {
         });
 
         const data = await res.json();
+        if (revision !== projectRevision || snapshot !== JSON.stringify(files)) return;
 
         if (data.success) {
           execBadge.className = 'status-tag status-success';
@@ -2005,11 +2111,13 @@ function main() {
           terminalOutput.innerHTML = `<div class="error-text"><strong>[錯誤訊息]:</strong>\n${escapeHtml(data.stderr || data.stdout || '未知錯誤')}</div>`;
         }
       } catch (err) {
+        if (revision !== projectRevision || snapshot !== JSON.stringify(files)) return;
         execBadge.className = 'status-tag status-error';
         execBadge.textContent = '連線錯誤';
         terminalOutput.innerHTML = `<div class="error-text">無法連接到 Rust Playground API: ${escapeHtml(err.message)}</div>`;
       } finally {
-        runBtn.disabled = false;
+        isRunning = false;
+        runBtn.disabled = !isValidated;
         runIcon.textContent = '▶';
       }
     }

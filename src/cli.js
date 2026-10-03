@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { transpile } from './index.js';
+import { transpile, validateJavaScript, JavaScriptValidationError } from './index.js';
 
 function printHelp() {
   console.log(`
@@ -19,6 +19,7 @@ Usage:
 Options:
   -o, --output <file.rs>   Write output to a Rust file instead of stdout
   --default-type <type>    Default number type: i64 (default) or f64
+  --check                  Check JavaScript and compatibility without writing Rust
   -h, --help               Show this help message
 
 Example:
@@ -56,6 +57,10 @@ async function main() {
   const jsSource = fs.readFileSync(inputFile, 'utf-8');
 
   try {
+    const validation = validateJavaScript(jsSource, { defaultNumberType, filename: inputFile });
+    if (!validation.valid) throw new JavaScriptValidationError(validation.diagnostics);
+    for (const warning of validation.diagnostics.filter(d => d.severity === 'warning')) console.warn(`[Warning] ${warning.filename}:${warning.line}:${warning.column} ${warning.message}`);
+    if (args.includes('--check')) { console.log('[Success] JavaScript static checks passed; runtime behavior still requires testing.'); return; }
     const rustSource = transpile(jsSource, { defaultNumberType, filename: inputFile });
 
     if (outputFile) {
@@ -72,4 +77,3 @@ async function main() {
 }
 
 main();
-

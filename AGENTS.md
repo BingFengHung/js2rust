@@ -6,6 +6,7 @@
 
 ## 檔案分工
 
+- `src/validation.js`：轉譯前語法、作用域、型別與子集檢查；不得執行使用者原始碼。診斷須區分 JS 問題／轉譯限制，保留檔名及行欄。型別未知時不得當成確定錯誤。
 - `src/index.js`：公開的單檔轉譯 API 與 parser 設定。
 - `src/codegen.js`：AST 分析、型別／借用處理、Rust 程式碼生成。
 - `src/inference.js`、`src/types.js`：參數推導與 JSDoc / Rust 型別映射。

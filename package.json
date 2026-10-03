@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "node test/run.js && node test/verify_templates.js",
+    "test": "node test/run.js && node test/verify_templates.js && node test/validation.js",
     "test:rust": "node test/rust.js",
     "playground": "node playground/server.js",
     "docs:build": "node scripts/build-docs.js",

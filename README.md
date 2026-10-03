@@ -79,6 +79,20 @@ npm run test:rust
 
 `npm test` 檢查轉譯輸出、診斷及 Playground 範本。`test:rust` 需要本機 Rust 工具鏈（`rustc`、`cargo`）：編譯並執行產出的 Rust，與 Node.js 執行同一段 JavaScript 的結果對照；另外驗證合併模組、完整 Cargo 專案及每個 Playground 範本。非同步範本使用 Tokio，首次執行需要下載 Cargo 相依套件。缺少工具會失敗，不會略過。
 
+## 轉譯前的 JavaScript 檢查
+
+Playground 會先檢查語法、作用域／未宣告變數、const 重新指定、宣告前使用、已知參數數量、明確型別、方法與匯入。錯誤清單包含檔名、行與欄，可點擊跳到原始碼；錯誤會阻止產生、下載及執行 Rust。編輯後會立即停用先前產物，過期回應不會覆蓋最新結果。
+
+「JavaScript 問題」與「合法 JavaScript 但不在轉譯子集內」分別標示。空陣列 reduce 等已知執行風險以警告提示。分析不會執行輸入的程式碼。
+
+```bash
+npm start -- test/example.js --check
+```
+
+API 提供 `validateJavaScript(source, { filename })` 與 `validateProject(files)`，回傳 `{ valid, diagnostics }`。診斷包含 `code`、`severity`、`category`、`filename`、`line`、`column` 與結束位置。Playground 的 `POST /api/validate` 可只檢查；`/api/transpile` 在錯誤時回傳 422 與診斷，不回傳 Rust。CLI 錯誤結束碼為 1，`--check` 不寫入 Rust 檔案。
+
+這是保守的靜態檢查：型別未知、動態資料、別名、副作用與執行時錯誤不能完整判定；沒有明確註記時不保證所有參數型別都能推導。`validateProject` 檢查各檔案及相對函式匯入，完整生成階段仍可能回報更深入的轉譯限制。通過不代表完整 JS 語意或 Rust 編譯一定成功，仍須執行 `npm run test:rust`。
+
 ## 已驗證的方法與範圍
 
 | 方法 | 已驗證的行為 |
