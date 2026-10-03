@@ -4,8 +4,9 @@
  */
 
 import { parse } from '@babel/parser';
+import path from 'node:path';
 import { transpile } from './index.js';
-import { RustEmitter, doesMethodMutateThis } from './codegen.js';
+import { RustEmitter } from './codegen.js';
 
 /**
  * Normalizes a file path by removing leading './' or 'src/'
@@ -44,40 +45,32 @@ function collectCrossModuleMetadata(files, options) {
   const sharedClasses = new Set(options.sharedClasses || []);
   const sharedSignatures = new Map(options.sharedSignatures || []);
 
-  const metaEmitter = new RustEmitter(options);
-
-  for (const rawPath of Object.keys(files)) {
-    try {
-      const ast = parse(files[rawPath], {
-        sourceType: 'module',
-        allowReturnOutsideFunction: true,
-        plugins: ['classProperties', 'numericSeparator', 'typescript'],
-      });
-      metaEmitter.collectSignatures(ast.program, ast);
-
-      for (let stmt of ast.program.body) {
-        if ((stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration') && stmt.declaration) {
-          stmt = stmt.declaration;
-        }
-        if (stmt.type === 'TSEnumDeclaration') {
-          sharedEnums.add(stmt.id.name);
-        } else if (stmt.type === 'ClassDeclaration') {
-          const className = stmt.id ? stmt.id.name : 'Anonymous';
-          sharedClasses.add(className);
-          const methods = stmt.body.body.filter((m) => m.type === 'ClassMethod' && m.kind === 'method');
-          for (const m of methods) {
-            if (doesMethodMutateThis(m.body)) {
-              sharedMutatingMethods.add(m.key.name);
-            }
-          }
-        }
+  const metadata = new Map();
+  const moduleExports = new Map();
+  for (const [rawPath, source] of Object.entries(files)) {
+    const ast = parse(source, {
+      sourceType: 'module', allowReturnOutsideFunction: true,
+      plugins: ['classProperties', 'numericSeparator', 'typescript'],
+    });
+    const emitter = new RustEmitter(options);
+    emitter.rootAst = ast;
+    emitter.collectTypeDefs(ast.comments);
+    emitter.collectClasses(ast.program);
+    emitter.collectSignatures(ast.program, ast);
+    const exports = new Map();
+    for (const stmt of ast.program.body) {
+      if (stmt.type === 'ExportDefaultDeclaration') exports.set('default', stmt.declaration.id?.name || 'default_export');
+      if (stmt.type === 'ExportNamedDeclaration') {
+        if (stmt.declaration?.id) exports.set(stmt.declaration.id.name, stmt.declaration.id.name);
+        for (const spec of stmt.specifiers) exports.set(spec.exported.name, spec.local.name);
       }
-    } catch (e) {
-      // ignore parse errors in pre-pass
     }
+    moduleExports.set(path.posix.normalize(rawPath), exports);
+    metadata.set(path.posix.normalize(rawPath), { ast, emitter });
+    emitter.enums.forEach(v => sharedEnums.add(v));
+    emitter.classes.forEach(v => sharedClasses.add(v));
+    emitter.classMutatingMethods.forEach(v => sharedMutatingMethods.add(v));
   }
-
-  metaEmitter.signatures.forEach((val, key) => sharedSignatures.set(key, val));
 
   return {
     ...options,
@@ -85,7 +78,31 @@ function collectCrossModuleMetadata(files, options) {
     sharedMutatingMethods,
     sharedClasses,
     sharedSignatures,
+    metadata,
+    moduleExports,
   };
+}
+
+
+function optionsForFile(rawPath, options) {
+  const filename = path.posix.normalize(rawPath);
+  const own = options.metadata.get(filename);
+  const signatures = new Map(own.emitter.signatures);
+  const returns = new Map(own.emitter.returnTypes);
+  for (const stmt of own.ast.program.body) {
+    if (stmt.type !== 'ImportDeclaration') continue;
+    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(filename), stmt.source.value));
+    const target = options.metadata.get(resolved);
+    if (!target) throw new Error(`Cannot resolve ${stmt.source.value} imported by ${rawPath}`);
+    for (const spec of stmt.specifiers) {
+      const exported = spec.type === 'ImportDefaultSpecifier' ? 'default' : spec.imported?.name;
+      const original = options.moduleExports.get(resolved)?.get(exported);
+      if (spec.type !== 'ImportNamespaceSpecifier' && !original) throw new Error(`Unknown export ${exported} in ${resolved}`);
+      if (target.emitter.signatures.has(original)) signatures.set(spec.local.name, target.emitter.signatures.get(original));
+      if (target.emitter.returnTypes.has(original)) returns.set(spec.local.name, target.emitter.returnTypes.get(original));
+    }
+  }
+  return { ...options, filename, sharedSignatures: signatures, sharedReturnTypes: returns };
 }
 
 /**
@@ -117,7 +134,7 @@ export function transpileMultiModules(files, options = {}) {
 
     if (rawPath === mainFilename) {
       // Transpile main file (this will automatically convert `import` to `use path::item;`)
-      mainRust = transpile(code, moduleOptions);
+      mainRust = transpile(code, optionsForFile(rawPath, moduleOptions));
     } else {
       // It's a module file (may be inside nested folders like utils/math.js)
       const parts = norm
@@ -125,7 +142,7 @@ export function transpileMultiModules(files, options = {}) {
         .split('/')
         .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
 
-      const compiledCode = transpile(code, moduleOptions);
+      const compiledCode = transpile(code, optionsForFile(rawPath, moduleOptions));
 
       // Insert into module tree
       let curr = rootModule;
@@ -229,7 +246,7 @@ ${dependencies}`;
       .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
 
     const code = files[rawPath];
-    const compiledCode = transpile(code, moduleOptions);
+    const compiledCode = transpile(code, optionsForFile(rawPath, moduleOptions));
 
     // rustFilePath: e.g. 'src/utils/math.rs'
     const rustFilePath = `src/${parts.join('/')}.rs`;
@@ -259,7 +276,7 @@ ${dependencies}`;
 
   // 3. Generate src/main.rs
   const mainJsCode = files[mainFilename] || '';
-  const mainCompiled = transpile(mainJsCode, moduleOptions);
+  const mainCompiled = transpile(mainJsCode, optionsForFile(mainFilename, moduleOptions));
 
   let mainRsHeader = '#![allow(unused_imports, unused_variables, dead_code, non_snake_case)]\n\n';
   if (topLevelMods.size > 0) {
@@ -271,3 +288,4 @@ ${dependencies}`;
 
   return project;
 }
+

@@ -56,7 +56,7 @@ async function main() {
   const jsSource = fs.readFileSync(inputFile, 'utf-8');
 
   try {
-    const rustSource = transpile(jsSource, { defaultNumberType });
+    const rustSource = transpile(jsSource, { defaultNumberType, filename: inputFile });
 
     if (outputFile) {
       fs.writeFileSync(outputFile, rustSource, 'utf-8');
@@ -72,3 +72,4 @@ async function main() {
 }
 
 main();
+
