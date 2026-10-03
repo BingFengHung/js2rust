@@ -1,0 +1,918 @@
+import { parse } from '@babel/parser';
+import traverseModule from '@babel/traverse';
+import path from 'node:path';
+import { parseJSDoc } from './types.js';
+import { RustEmitter } from './codegen.js';
+
+const traverse = traverseModule.default || traverseModule;
+const globals = new Set([
+  'console',
+  'Math',
+  'NaN',
+  'Infinity',
+  'undefined',
+  'Promise',
+  'setTimeout',
+  'thread',
+  'Thread',
+  'mpsc',
+  'Arc',
+  'Mutex',
+  'unsafe',
+  'channel',
+  'createChannel',
+]);
+const unsupportedGlobals = new Set([
+  'process',
+  'require',
+  'fetch',
+  'JSON',
+  'Date',
+  'Map',
+  'Set',
+  'Object',
+  'Array',
+  'Number',
+  'String',
+  'Boolean',
+  'window',
+  'document',
+  'eval',
+]);
+const callbacks = new Set([
+  'map',
+  'filter',
+  'reduce',
+  'forEach',
+  'some',
+  'every',
+  'find',
+]);
+const arrayMethods = new Set([
+  ...callbacks,
+  'push',
+  'pop',
+  'slice',
+  'splice',
+  'includes',
+  'indexOf',
+  'join',
+]);
+const stringMethods = new Set([
+  'split',
+  'trim',
+  'toLowerCase',
+  'toUpperCase',
+  'startsWith',
+  'endsWith',
+  'includes',
+]);
+const unsupportedNodes = new Set([
+  'TryStatement',
+  'ThrowStatement',
+  'DoWhileStatement',
+  'ForInStatement',
+  'LabeledStatement',
+  'WithStatement',
+  'DebuggerStatement',
+  'SpreadElement',
+  'RestElement',
+  'OptionalCallExpression',
+  'OptionalMemberExpression',
+  'TaggedTemplateExpression',
+  'YieldExpression',
+]);
+
+export function diagnostic(
+  node,
+  code,
+  message,
+  filename = 'source',
+  severity = 'error',
+  category = 'javascript',
+) {
+  const loc = node?.loc?.start || { line: 1, column: 0 };
+  const end = node?.loc?.end || loc;
+  return {
+    code,
+    severity,
+    category,
+    message,
+    filename,
+    line: loc.line,
+    column: loc.column + 1,
+    endLine: end.line,
+    endColumn: end.column + 1,
+  };
+}
+
+export class JavaScriptValidationError extends Error {
+  constructor(diagnostics) {
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    super(
+      errors
+        .map((d) => `${d.message} (${d.filename}:${d.line}:${d.column})`)
+        .join('\n'),
+    );
+    this.name = 'JavaScriptValidationError';
+    this.diagnostics = diagnostics;
+  }
+}
+
+export function parseJavaScript(source, filename = 'source') {
+  try {
+    return {
+      ast: parse(source, {
+        sourceType: 'module',
+        plugins: ['classProperties', 'numericSeparator', 'typescript'],
+      }),
+      diagnostics: [],
+    };
+  } catch (error) {
+    return {
+      ast: null,
+      diagnostics: [
+        diagnostic(
+          { loc: { start: error.loc, end: error.loc } },
+          'JS_SYNTAX',
+          `JavaScript 語法錯誤：${error.message}`,
+          filename,
+        ),
+      ],
+    };
+  }
+}
+
+function normalizeType(value) {
+  if (!value) return null;
+  if (
+    [
+      'number',
+      'int',
+      'integer',
+      'float',
+      'f64',
+      'f32',
+      'i64',
+      'i32',
+      'usize',
+    ].includes(value)
+  )
+    return 'number';
+  if (['string', 'String', '&str'].includes(value)) return 'string';
+  if (['bool', 'boolean'].includes(value)) return 'boolean';
+  if (value.endsWith('[]'))
+    return `array:${normalizeType(value.slice(0, -2)) || '?'}`;
+  const array = value.match(/^Array<(.+)>$/);
+  return array ? `array:${normalizeType(array[1]) || '?'}` : null;
+}
+function annotatedType(node) {
+  const annotation = node?.typeAnnotation?.typeAnnotation || node;
+  if (!annotation) return null;
+  return (
+    {
+      TSNumberKeyword: 'number',
+      TSStringKeyword: 'string',
+      TSBooleanKeyword: 'boolean',
+      TSVoidKeyword: 'void',
+    }[annotation.type] ||
+    (annotation.type === 'TSArrayType'
+      ? `array:${annotatedType(annotation.elementType) || '?'}`
+      : null)
+  );
+}
+function docsFor(fnPath) {
+  return parseJSDoc([
+    ...(fnPath.node.leadingComments || []),
+    ...(fnPath.parentPath?.node.leadingComments || []),
+  ]);
+}
+function compatible(actual, expected) {
+  if (!actual || !expected) return true;
+  if (actual === expected) return true;
+  return (
+    actual.startsWith('array:') &&
+    expected.startsWith('array:') &&
+    (actual.endsWith(':?') || expected.endsWith(':?'))
+  );
+}
+
+/** Scope-aware checks only; source is never evaluated or executed. */
+export function analyzeJavaScript(source, options = {}) {
+  const filename = options.filename || 'source';
+  const result = parseJavaScript(source, filename);
+  if (!result.ast) return result;
+  const diagnostics = [];
+  const paths = new WeakMap();
+  const enums = new Set();
+  const callTypes = new Map();
+  const modules = new Map();
+  traverse(result.ast, {
+    enter(p) {
+      paths.set(p.node, p);
+      if (p.isTSEnumDeclaration()) enums.add(p.node.id.name);
+    },
+  });
+  const report = (
+    node,
+    code,
+    message,
+    severity = 'error',
+    category = 'javascript',
+  ) =>
+    diagnostics.push(
+      diagnostic(node, code, message, filename, severity, category),
+    );
+  const bindingFunction = (binding) => {
+    if (!binding) return null;
+    if (binding.path.isFunctionDeclaration()) return binding.path;
+    if (
+      binding.path.isVariableDeclarator() &&
+      ['ArrowFunctionExpression', 'FunctionExpression'].includes(
+        binding.path.node.init?.type,
+      )
+    )
+      return binding.path.get('init');
+    if (binding.kind === 'module' && options.files) {
+      const declaration = binding.path.parentPath.node;
+      const resolved = path.posix.normalize(
+        path.posix.join(path.posix.dirname(filename), declaration.source.value),
+      );
+      const module = moduleRecord(resolved);
+      const exported = binding.path.isImportDefaultSpecifier()
+        ? 'default'
+        : binding.path.node.imported?.name;
+      return module?.exports.get(exported)?.isFunction()
+        ? module.exports.get(exported)
+        : null;
+    }
+    return null;
+  };
+  function moduleRecord(resolved) {
+    if (modules.has(resolved)) return modules.get(resolved);
+    const source = Object.entries(options.files || {}).find(
+      ([file]) => path.posix.normalize(file) === resolved,
+    )?.[1];
+    if (typeof source !== 'string') return null;
+    const ast = parseJavaScript(source, resolved).ast;
+    if (!ast) return null;
+    let program;
+    traverse(ast, {
+      Program(p) {
+        program = p;
+      },
+    });
+    const exports = new Map();
+    for (const statement of program.get('body')) {
+      if (statement.isExportDefaultDeclaration())
+        exports.set('default', statement.get('declaration'));
+      if (statement.isExportNamedDeclaration()) {
+        const declaration = statement.get('declaration');
+        if (declaration.node?.id)
+          exports.set(declaration.node.id.name, declaration);
+        for (const spec of statement.node.specifiers) {
+          const binding = program.scope.getBinding(spec.local.name);
+          if (binding) exports.set(spec.exported.name, binding.path);
+        }
+      }
+    }
+    const record = { exports };
+    modules.set(resolved, record);
+    return record;
+  }
+  function infer(node, scope, seen = new Set()) {
+    if (!node || seen.has(node)) return null;
+    const next = new Set(seen).add(node);
+    if (node.type === 'NumericLiteral') return 'number';
+    if (['StringLiteral', 'TemplateLiteral'].includes(node.type))
+      return 'string';
+    if (node.type === 'BooleanLiteral') return 'boolean';
+    if (node.type === 'ArrayExpression') {
+      const types = new Set(
+        node.elements.map((e) => infer(e, scope, next)).filter(Boolean),
+      );
+      return `array:${types.size === 1 ? [...types][0] : '?'}`;
+    }
+    if (node.type === 'Identifier') {
+      if (['NaN', 'Infinity'].includes(node.name)) return 'number';
+      const binding = scope.getBinding(node.name);
+      if (!binding) return null;
+      if (binding.kind === 'param') {
+        const fn = binding.path.getFunctionParent();
+        const explicit =
+          annotatedType(binding.path.node) ||
+          normalizeType(docsFor(fn).params[node.name]);
+        if (explicit) return explicit;
+        const call = fn?.parentPath;
+        if (
+          call?.isCallExpression() &&
+          call.node.callee.type === 'MemberExpression'
+        ) {
+          const method = call.node.callee.property.name;
+          const element = infer(
+            call.node.callee.object,
+            call.scope,
+            next,
+          )?.replace(/^array:/, '');
+          const index = fn.node.params.findIndex((p) => p.name === node.name);
+          if (method === 'reduce')
+            return index === 2
+              ? 'number'
+              : index === 0 && call.node.arguments[1]
+                ? infer(call.node.arguments[1], call.scope, next)
+                : element;
+          if (callbacks.has(method)) return index === 1 ? 'number' : element;
+        }
+        const parameter = fn?.node.params.find(
+          (p) => (p.left || p).name === node.name,
+        );
+        return parameter?.type === 'AssignmentPattern'
+          ? infer(parameter.right, fn.scope, next)
+          : null;
+      }
+      if (binding.path.isVariableDeclarator()) {
+        const declaration = binding.path.node;
+        return (
+          annotatedType(declaration.id) ||
+          infer(declaration.init, binding.path.scope, next)
+        );
+      }
+      return null;
+    }
+    if (node.type === 'UnaryExpression')
+      return node.operator === '!'
+        ? 'boolean'
+        : infer(node.argument, scope, next);
+    if (['BinaryExpression', 'LogicalExpression'].includes(node.type)) {
+      if (
+        ['==', '===', '!=', '!==', '<', '<=', '>', '>='].includes(node.operator)
+      )
+        return 'boolean';
+      const a = infer(node.left, scope, next),
+        b = infer(node.right, scope, next);
+      if (node.operator === '+' && (a === 'string' || b === 'string'))
+        return 'string';
+      if (a === 'number' && b === 'number') return 'number';
+      return a === b ? a : null;
+    }
+    if (node.type === 'ConditionalExpression') {
+      const a = infer(node.consequent, scope, next),
+        b = infer(node.alternate, scope, next);
+      return a === b ? a : null;
+    }
+    if (node.type === 'MemberExpression')
+      return node.property.name === 'length'
+        ? 'number'
+        : node.computed
+          ? infer(node.object, scope, next)?.replace(/^array:/, '')
+          : null;
+    if (node.type === 'CallExpression') {
+      if (node.callee.type === 'Identifier') {
+        const fn = bindingFunction(scope.getBinding(node.callee.name));
+        return fn
+          ? annotatedType(fn.node.returnType?.typeAnnotation) ||
+              normalizeType(docsFor(fn).returns)
+          : null;
+      }
+      if (node.callee.type !== 'MemberExpression') return null;
+      const method = node.callee.property.name;
+      if (node.callee.object.name === 'Math') return 'number';
+      if (
+        ['includes', 'some', 'every', 'startsWith', 'endsWith'].includes(method)
+      )
+        return 'boolean';
+      if (['push', 'indexOf'].includes(method)) return 'number';
+      if (['join', 'trim', 'toLowerCase', 'toUpperCase'].includes(method))
+        return 'string';
+      if (method === 'split') return 'array:string';
+      const receiver = infer(node.callee.object, scope, next);
+      if (['slice', 'splice', 'filter'].includes(method)) return receiver;
+      const callback = node.arguments[0];
+      if (
+        ['map', 'reduce'].includes(method) &&
+        callback &&
+        callback.body?.type !== 'BlockStatement'
+      ) {
+        const type = infer(
+          callback.body,
+          paths.get(callback)?.scope || scope,
+          next,
+        );
+        return method === 'map' ? `array:${type || '?'}` : type;
+      }
+    }
+    return null;
+  }
+  function checkArguments(p, fn) {
+    const params = fn.node.params;
+    const args = p.node.arguments;
+    const required = params.reduce(
+      (last, param, i) =>
+        param.type === 'AssignmentPattern' || param.type === 'RestElement'
+          ? last
+          : i + 1,
+      0,
+    );
+    if (args.length < required)
+      report(
+        p.node,
+        'RUST_REQUIRED_ARGUMENTS',
+        `Missing required argument：JavaScript 可省略參數，但目前 Rust 子集要求 ${p.node.callee.name} 至少傳入 ${required} 個參數，目前為 ${args.length} 個。`,
+        'error',
+        'compatibility',
+      );
+    if (
+      args.length > params.length &&
+      !params.some((param) => param.type === 'RestElement')
+    )
+      report(
+        p.node,
+        'RUST_ARGUMENT_COUNT',
+        '合法 JavaScript 的額外參數目前無法轉譯為 Rust；請移除多餘參數。',
+        'error',
+        'compatibility',
+      );
+    const docs = docsFor(fn);
+    params.forEach((parameter, i) => {
+      const name = (parameter.left || parameter).name;
+      const expected =
+        annotatedType(parameter.left || parameter) ||
+        normalizeType(docs.params[name]) ||
+        (parameter.type === 'AssignmentPattern'
+          ? infer(parameter.right, fn.scope)
+          : null);
+      const actual = infer(args[i], p.scope);
+      if (!compatible(actual, expected))
+        report(
+          args[i],
+          'JS_ARGUMENT_TYPE',
+          `參數 ${name} 預期 ${expected}，實際為 ${actual}。`,
+        );
+    });
+  }
+  traverse(result.ast, {
+    enter(p) {
+      if (unsupportedNodes.has(p.node.type))
+        report(
+          p.node,
+          'RUST_UNSUPPORTED_SYNTAX',
+          `Unsupported AST node: ${p.node.type}（合法 JavaScript，但目前不支援轉譯）`,
+          'error',
+          'compatibility',
+        );
+    },
+    ReferencedIdentifier(p) {
+      if (
+        p.findParent(
+          (parent) =>
+            parent.isTSType?.() ||
+            [
+              'TSInterfaceDeclaration',
+              'TSTypeAliasDeclaration',
+              'TSClassImplements',
+              'TSMethodSignature',
+              'TSPropertySignature',
+            ].includes(parent.node.type),
+        )
+      )
+        return;
+      const name = p.node.name;
+      const binding = p.scope.getBinding(name);
+      if (!binding && !globals.has(name) && !enums.has(name)) {
+        report(
+          p.node,
+          unsupportedGlobals.has(name)
+            ? 'RUST_UNSUPPORTED_GLOBAL'
+            : 'JS_UNDECLARED',
+          unsupportedGlobals.has(name)
+            ? `${name} 是 JavaScript API，但目前尚未對接 Rust。`
+            : `未宣告的變數或函式：${name}。`,
+          'error',
+          unsupportedGlobals.has(name) ? 'compatibility' : 'javascript',
+        );
+      }
+      if (
+        binding &&
+        ['const', 'let'].includes(binding.kind) &&
+        p.getFunctionParent() === binding.path.getFunctionParent()
+      ) {
+        const init = binding.path.node.init;
+        if (
+          p.node.start < binding.identifier.start ||
+          (init && p.node.start >= init.start && p.node.end <= init.end)
+        )
+          report(
+            p.node,
+            'JS_BEFORE_DECLARATION',
+            `${name} 在 let/const 初始化完成前被使用。`,
+          );
+      }
+    },
+    'AssignmentExpression|UpdateExpression'(p) {
+      const target = p.node.left || p.node.argument;
+      if (target.type !== 'Identifier') return;
+      const binding = p.scope.getBinding(target.name);
+      if (!binding)
+        report(target, 'JS_UNDECLARED', `未宣告的變數：${target.name}。`);
+      else if (binding.kind === 'const' || binding.kind === 'module')
+        report(
+          target,
+          'JS_CONST_ASSIGNMENT',
+          `不能重新指定 ${binding.kind === 'module' ? '匯入' : 'const'} 變數 ${target.name}。`,
+        );
+      else if (p.node.operator === '=') {
+        const expected = infer(target, p.scope),
+          actual = infer(p.node.right, p.scope);
+        if (!compatible(actual, expected))
+          report(
+            p.node.right,
+            'RUST_VARIABLE_TYPE',
+            `變數 ${target.name} 從 ${expected} 改為 ${actual}；目前 Rust 子集不支援改變變數型別。`,
+            'error',
+            'compatibility',
+          );
+      }
+    },
+    VariableDeclarator(p) {
+      const expected = annotatedType(p.node.id),
+        actual = infer(p.node.init, p.scope);
+      if (!compatible(actual, expected))
+        report(
+          p.node.init,
+          'JS_DECLARATION_TYPE',
+          `宣告預期 ${expected}，初始值為 ${actual}。`,
+        );
+    },
+    AssignmentPattern(p) {
+      const expected = annotatedType(p.node.left),
+        actual = infer(p.node.right, p.scope);
+      if (!compatible(actual, expected))
+        report(
+          p.node.right,
+          'JS_DEFAULT_TYPE',
+          `預設值預期 ${expected}，實際為 ${actual}。`,
+        );
+    },
+    ReturnStatement(p) {
+      const fn = p.getFunctionParent();
+      if (!fn) return;
+      const expected =
+        annotatedType(fn.node.returnType?.typeAnnotation) ||
+        normalizeType(docsFor(fn).returns);
+      const actual = p.node.argument ? infer(p.node.argument, p.scope) : 'void';
+      if (!compatible(actual, expected))
+        report(
+          p.node,
+          'JS_RETURN_TYPE',
+          `回傳值預期 ${expected}，實際為 ${actual}。`,
+        );
+    },
+    CallExpression(p) {
+      if (p.node.callee.type === 'Identifier') {
+        const fn = bindingFunction(p.scope.getBinding(p.node.callee.name));
+        if (fn) {
+          checkArguments(p, fn);
+          const previous = callTypes.get(fn.node) || [];
+          p.node.arguments.forEach((arg, i) => {
+            const actual = infer(arg, p.scope);
+            if (!compatible(actual, previous[i]))
+              report(
+                arg,
+                'RUST_CALL_TYPE',
+                `Conflicting argument types：${p.node.callee.name} 的第 ${i + 1} 個參數分別使用 ${previous[i]} 與 ${actual}，目前需要一致型別。`,
+                'error',
+                'compatibility',
+              );
+            if (actual && !previous[i]) previous[i] = actual;
+          });
+          callTypes.set(fn.node, previous);
+        }
+        return;
+      }
+      if (p.node.callee.type !== 'MemberExpression' || p.node.callee.computed)
+        return;
+      const { object, property } = p.node.callee;
+      const method = property.name;
+      const receiver = infer(object, p.scope);
+      const array = receiver?.startsWith('array:');
+      const args = p.node.arguments;
+      if (object.name === 'Math' && !p.scope.getBinding('Math')) {
+        const count = { floor: 1, sqrt: 1, abs: 1, pow: 2, min: 2, max: 2 }[
+          method
+        ];
+        if (!count)
+          report(
+            property,
+            'RUST_MATH_METHOD',
+            `Math.${method} 目前不支援。`,
+            'error',
+            'compatibility',
+          );
+        else if (args.length !== count)
+          report(
+            p.node,
+            'RUST_METHOD_ARGUMENTS',
+            `目前 Math.${method} 需要 ${count} 個參數。`,
+            'error',
+            'compatibility',
+          );
+      }
+      if (receiver === 'string' && !stringMethods.has(method))
+        report(
+          property,
+          'RUST_STRING_METHOD',
+          `字串方法 ${method} 目前不支援；請檢查拼字與接收值型別。`,
+          'error',
+          'compatibility',
+        );
+      if (array && !arrayMethods.has(method))
+        report(
+          property,
+          'RUST_ARRAY_METHOD',
+          `Unsupported array method: ${method}；請檢查拼字或支援範圍。`,
+          'error',
+          'compatibility',
+        );
+      if (
+        receiver &&
+        receiver !== 'string' &&
+        !array &&
+        (arrayMethods.has(method) || stringMethods.has(method))
+      )
+        report(
+          object,
+          'JS_METHOD_RECEIVER',
+          `${receiver} 無法使用 ${method} 方法。`,
+        );
+      if (array && callbacks.has(method)) {
+        const callback = p.node.arguments[0];
+        if (
+          !callback ||
+          !['ArrowFunctionExpression', 'FunctionExpression'].includes(
+            callback.type,
+          )
+        )
+          report(
+            p.node,
+            'RUST_CALLBACK',
+            `${method} 需要內嵌函式回呼。`,
+            'error',
+            'compatibility',
+          );
+        else if (callback.params.length > (method === 'reduce' ? 3 : 2))
+          report(
+            callback,
+            'RUST_CALLBACK_PARAMS',
+            `Array callbacks support up to ${method === 'reduce' ? 3 : 2} identifier parameters`,
+            'error',
+            'compatibility',
+          );
+        if (args.length > (method === 'reduce' ? 2 : 1))
+          report(
+            p.node,
+            'RUST_METHOD_ARGUMENTS',
+            `${method} 的額外參數（例如 thisArg）目前不支援。`,
+            'error',
+            'compatibility',
+          );
+      }
+      if (array && ['push', 'splice', 'includes', 'indexOf'].includes(method)) {
+        const element = receiver.slice('array:'.length);
+        const values =
+          method === 'splice'
+            ? args.slice(2)
+            : ['includes', 'indexOf'].includes(method)
+              ? args.slice(0, 1)
+              : args;
+        for (const value of values) {
+          const actual = infer(value, p.scope);
+          if (element !== '?' && !compatible(actual, element))
+            report(
+              value,
+              'RUST_ARRAY_ELEMENT',
+              `${method} 元素預期 ${element}，實際為 ${actual}。`,
+              'error',
+              'compatibility',
+            );
+        }
+      }
+      const numericArguments =
+        array && ['slice', 'splice'].includes(method)
+          ? args.slice(0, 2)
+          : array && ['includes', 'indexOf'].includes(method)
+            ? args.slice(1, 2)
+            : receiver === 'string' && method === 'split'
+              ? args.slice(1, 2)
+              : [];
+      for (const argument of numericArguments) {
+        const actual = infer(argument, p.scope);
+        if (actual && actual !== 'number')
+          report(
+            argument,
+            'RUST_INDEX_TYPE',
+            '索引／數量需要 number；目前不支援 JavaScript 隱式轉型。',
+            'error',
+            'compatibility',
+          );
+      }
+      if (
+        receiver === 'string' &&
+        ['split', 'includes', 'startsWith', 'endsWith'].includes(method) &&
+        args[0]
+      ) {
+        const actual = infer(args[0], p.scope);
+        if (actual && actual !== 'string')
+          report(
+            args[0],
+            'RUST_STRING_ARGUMENT',
+            `${method} 的文字參數需要 string，實際為 ${actual}；目前不支援 JavaScript 隱式轉型。`,
+            'error',
+            'compatibility',
+          );
+      }
+      const maxArguments = array
+        ? { pop: 0, slice: 2, includes: 2, indexOf: 2, join: 1 }[method]
+        : receiver === 'string'
+          ? {
+              split: 2,
+              trim: 0,
+              toLowerCase: 0,
+              toUpperCase: 0,
+              startsWith: 1,
+              endsWith: 1,
+              includes: 1,
+            }[method]
+          : undefined;
+      if (maxArguments !== undefined && args.length > maxArguments)
+        report(
+          p.node,
+          'RUST_METHOD_ARGUMENTS',
+          `${method} 的額外參數目前不支援。`,
+          'error',
+          'compatibility',
+        );
+      if (
+        receiver === 'string' &&
+        method === 'split' &&
+        p.node.arguments[0]?.type === 'RegExpLiteral'
+      )
+        report(
+          p.node.arguments[0],
+          'RUST_SPLIT_REGEX',
+          'split supports string separators, not regular expressions',
+          'error',
+          'compatibility',
+        );
+      if (array && method === 'reduce' && p.node.arguments.length === 1) {
+        const binding =
+          object.type === 'Identifier' ? p.scope.getBinding(object.name) : null;
+        const initial =
+          object.type === 'ArrayExpression' ? object : binding?.path.node.init;
+        if (
+          initial?.type === 'ArrayExpression' &&
+          initial.elements.length === 0
+        )
+          report(
+            p.node,
+            'JS_EMPTY_REDUCE',
+            '空陣列 reduce 未提供初始值，執行時可能失敗。',
+            'warning',
+          );
+      }
+    },
+    ConditionalExpression(p) {
+      const a = infer(p.node.consequent, p.scope),
+        b = infer(p.node.alternate, p.scope);
+      if (!compatible(a, b))
+        report(
+          p.node,
+          'RUST_CONDITIONAL_TYPE',
+          `條件運算的兩個結果為 ${a} 與 ${b}；Rust 子集需要相同型別。`,
+          'error',
+          'compatibility',
+        );
+    },
+    ImportDeclaration(p) {
+      const source = p.node.source.value;
+      if (!source.startsWith('.')) {
+        report(
+          p.node,
+          'RUST_EXTERNAL_MODULE',
+          `Unsupported external module: ${source}`,
+          'error',
+          'compatibility',
+        );
+        return;
+      }
+      if (
+        p.node.specifiers.some(
+          (spec) => spec.type === 'ImportNamespaceSpecifier',
+        )
+      )
+        report(
+          p.node,
+          'RUST_NAMESPACE_IMPORT',
+          'Namespace imports are unsupported; use named imports',
+          'error',
+          'compatibility',
+        );
+      if (!options.files) return;
+      const resolved = path.posix.normalize(
+        path.posix.join(path.posix.dirname(filename), source),
+      );
+      if (
+        !Object.keys(options.files).some(
+          (file) => path.posix.normalize(file) === resolved,
+        )
+      )
+        report(
+          p.node.source,
+          'JS_IMPORT_NOT_FOUND',
+          `找不到匯入檔案：${resolved}。`,
+        );
+      else {
+        const module = moduleRecord(resolved);
+        for (const spec of p.node.specifiers) {
+          if (spec.type === 'ImportNamespaceSpecifier') continue;
+          const exported =
+            spec.type === 'ImportDefaultSpecifier'
+              ? 'default'
+              : spec.imported.name;
+          if (module && !module.exports.has(exported))
+            report(
+              spec,
+              'JS_IMPORT_EXPORT',
+              `Unknown export ${exported} in ${resolved}`,
+            );
+        }
+      }
+    },
+  });
+  const unique = new Map(
+    diagnostics.map((d) => [`${d.code}:${d.line}:${d.column}`, d]),
+  );
+  return {
+    ast: result.ast,
+    diagnostics: [...unique.values()].sort(
+      (a, b) => a.line - b.line || a.column - b.column,
+    ),
+  };
+}
+
+export function diagnosticsFromError(error, filename = 'source') {
+  if (error.diagnostics) return error.diagnostics;
+  const match = error.message?.match(/\(([^()\n]+):([0-9]+):([0-9]+)\)/);
+  const loc = error.sourceLocation || match?.slice(2).map(Number);
+  const item = diagnostic(
+    null,
+    'RUST_COMPATIBILITY',
+    error.message || String(error),
+    error.sourceFilename || (match?.[1] !== 'source' && match?.[1]) || filename,
+    'error',
+    'compatibility',
+  );
+  if (match && item.message.endsWith(match[0]))
+    item.message = item.message.slice(0, -match[0].length).trimEnd();
+  if (loc) {
+    item.line = Number(loc[0]);
+    item.column = Number(loc[1]);
+    item.endLine = item.line;
+    item.endColumn = item.column + 1;
+  }
+  return [item];
+}
+
+export function validateJavaScript(source, options = {}) {
+  const analysis = analyzeJavaScript(source, options);
+  const diagnostics = [...analysis.diagnostics];
+  if (
+    !diagnostics.some((d) => d.severity === 'error') &&
+    options.checkCompatibility !== false
+  ) {
+    try {
+      new RustEmitter(options).emitProgramWithAst(analysis.ast);
+    } catch (error) {
+      diagnostics.push(...diagnosticsFromError(error, options.filename));
+    }
+  }
+  return {
+    valid: !diagnostics.some((d) => d.severity === 'error'),
+    diagnostics,
+  };
+}
+
+export function validateProject(files, options = {}) {
+  const diagnostics = Object.entries(files).flatMap(
+    ([filename, source]) =>
+      analyzeJavaScript(source, { ...options, filename, files }).diagnostics,
+  );
+  return {
+    valid: !diagnostics.some((d) => d.severity === 'error'),
+    diagnostics,
+  };
+}
+
+export function assertValid(result) {
+  if (result.diagnostics.some((d) => d.severity === 'error'))
+    throw new JavaScriptValidationError(result.diagnostics);
+}

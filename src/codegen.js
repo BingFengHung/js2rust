@@ -99,7 +99,10 @@ export class RustEmitter {
 
   fail(node, message) {
     const where = node?.loc ? ` (${this.options.filename || 'source'}:${node.loc.start.line}:${node.loc.start.column + 1})` : '';
-    throw new Error(`${message}${where}`);
+    const error = new Error(`${message}${where}`);
+    if (node?.loc) error.sourceLocation = [node.loc.start.line, node.loc.start.column + 1];
+    error.sourceFilename = this.options.filename;
+    throw error;
   }
 
   withScope(bindings, fn) {

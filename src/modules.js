@@ -7,6 +7,7 @@ import { parse } from '@babel/parser';
 import path from 'node:path';
 import { transpile } from './index.js';
 import { RustEmitter } from './codegen.js';
+import { assertValid, validateProject } from './validation.js';
 
 /**
  * Normalizes a file path by removing leading './' or 'src/'
@@ -117,6 +118,7 @@ export function transpileMultiModules(files, options = {}) {
   if (filenames.length === 0) {
     return '';
   }
+  assertValid(validateProject(files, options));
 
   const moduleOptions = collectCrossModuleMetadata(files, options);
 
@@ -209,6 +211,7 @@ export function generateRustProject(files, options = {}) {
   if (filenames.length === 0) {
     return {};
   }
+  assertValid(validateProject(files, options));
 
   const moduleOptions = collectCrossModuleMetadata(files, options);
 
@@ -288,4 +291,3 @@ ${dependencies}`;
 
   return project;
 }
-
