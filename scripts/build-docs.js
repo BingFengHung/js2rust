@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { transpile } from '../src/index.js';
+import { transpile, generateRustProject } from '../src/index.js';
+import { loadTemplateCatalog } from '../test/templates.js';
 import { examples } from './docs-examples.js';
 
 const verify = process.argv.includes('--verify');
@@ -84,6 +85,22 @@ try {
     fs.writeFileSync(target, data);
     console.log('Built docs/examples-data.js from the project transpiler.');
   }
+  const catalog = loadTemplateCatalog().map((template) => ({
+    ...template,
+    projectFiles: generateRustProject(template.files),
+  }));
+  const catalogData = `// Generated from playground/index.html by npm run docs:build.\nwindow.JS2RUST_TEMPLATES = ${JSON.stringify(catalog, null, 2)};\n`;
+  const catalogTarget = new URL('../docs/templates-data.js', import.meta.url);
+  if (verify)
+    assert.equal(
+      fs.readFileSync(catalogTarget, 'utf8'),
+      catalogData,
+      'Template catalog is stale. Run npm run docs:build.',
+    );
+  else fs.writeFileSync(catalogTarget, catalogData);
+  console.log(
+    `${verify ? 'Verified' : 'Built'} ${catalog.length} Playground templates and their Cargo projects.`,
+  );
 } finally {
   if (temp) fs.rmSync(temp, { recursive: true, force: true });
 }
