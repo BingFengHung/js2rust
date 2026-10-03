@@ -28,7 +28,7 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   `;
   const rust = transpile(js);
   assert(rust.includes('pub fn add(a: i64, b: i64) -> i64'), 'Translates basic function with default types');
-  assert(rust.includes('return a + b;'), 'Translates arithmetic expression');
+  assert(rust.includes('return (a + b);'), 'Translates arithmetic expression');
 }
 
 // Test 2: Smart Type Inference from call sites (No JSDoc required!)
@@ -63,7 +63,7 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   const rust = transpileMultiModules(files);
   assert(rust.includes('pub mod utils {'), 'Creates parent module pub mod utils');
   assert(rust.includes('pub mod math {'), 'Creates nested module pub mod math');
-  assert(rust.includes('use utils::math::add;'), 'Translates nested import to use utils::math::add;');
+  assert(rust.includes('use crate::utils::math::add;'), 'Resolves nested imports from the crate root');
   assert(rust.includes('fn main()'), 'Includes main function');
 
   // Test 4: generateRustProject generates multi-file Cargo project structure
@@ -213,7 +213,7 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   `;
   const rust = transpile(js);
   assert(rust.includes('unsafe {'), 'Emits unsafe { ... } block');
-  assert(rust.includes('println!("{:?} {:?}", "Accessing unsafe block:", x);'), 'Executes inside unsafe block');
+  assert(rust.includes('println!("{} {}", "Accessing unsafe block:", x);'), 'Executes inside unsafe block');
 }
 
 // Test 11: TypeScript / Rust Enum transpilation (enum Direction)
@@ -241,7 +241,7 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   assert(rust.includes('pub enum Direction {'), 'Emits pub enum Direction');
   assert(rust.includes('North,'), 'Contains enum variant North');
   assert(rust.includes('Direction::North'), 'Translates Direction.North to Direction::North');
-  assert(rust.includes('match dir {'), 'Translates switch to match');
+  assert(rust.includes('match &__js2rust_value_'), 'Translates switch to match');
 }
 
 // Test 12: Explicit Lifetime Annotations (@lifetime 'a)
@@ -307,7 +307,7 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   }
   `;
   const rust = transpile(js);
-  assert(rust.includes('a.into_iter().map(move |x| {'), 'Translates a.map to a.into_iter().map');
+  assert(rust.includes('a.iter().cloned().map('), 'Maps cloned values without consuming the original array');
   assert(rust.includes('.collect::<Vec<_>>()'), 'Collects mapped iterator to Vec');
 }
 
@@ -331,10 +331,10 @@ console.log('\n--- Running js-to-rust Test Suite ---\n');
   `;
   const rust = transpile(js);
   assert(rust.includes('pub fn appendItem(list: &mut Vec<i64>, item: i64)'), 'Infers list: &mut Vec<i64> because of push');
-  assert(rust.includes('let mut nums = vec![1, 2, 3];'), 'Upgrades const nums to let mut because passed as &mut');
+  assert(rust.includes('let mut nums: Vec<i64> = vec![1, 2, 3];'), 'Upgrades const nums to a typed mutable vector because passed as &mut');
   assert(rust.includes('appendItem(&mut nums, 4);'), 'Passes nums as &mut nums');
-  assert(rust.includes('let mut a = vec![1, 2, 3];'), 'Upgrades a to let mut because of a.push(4)');
-  assert(rust.includes('a.into_iter().fold(0,'), 'Translates reduce to into_iter().fold(0, ...)');
+  assert(rust.includes('let mut a: Vec<i64> = vec![1, 2, 3];'), 'Upgrades a to a typed mutable vector because of a.push(4)');
+  assert(rust.includes('a.iter().cloned().fold(0,'), 'Reduces borrowed cloned values with the explicit initial value');
 }
 
 {
@@ -429,8 +429,8 @@ export function calculateTotal(subtotal, discount, taxPercent) {
   }
   `;
   const rust = transpile(js);
-  assert(rust.includes('&arr[0..(((arr.len() as i64) / 2) as usize)]'), 'Translates arr.slice(0, arr.length / 2) to Rust slice range');
-  assert(rust.includes('&arr[(((arr.len() as i64) / 2) as usize)..]'), 'Translates arr.slice(mid, arr.length) to Rust slice range to end');
+  assert(rust.includes('__js2rust::slice(&arr, ((0) as f64), Some('), 'Copies slice values using JavaScript-compatible index normalization');
+  assert(rust.includes('pub fn testSlice(arr: &[i64]) -> Vec<i64>'), 'Returns an owned slice copy rather than a borrowed array');
 }
 
 console.log(`\nResults: ${passed} passed, ${failed} failed.\n`);

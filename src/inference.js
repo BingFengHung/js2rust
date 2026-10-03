@@ -104,7 +104,10 @@ function inferFromCallSites(fnName, paramIndex, ast) {
         const arg = node.arguments[paramIndex];
         const argType = inferFromLiteral(arg);
         if (argType) {
-          inferred = argType;
+          if (inferred && inferred !== argType) {
+            if (['int', 'float'].includes(inferred) && ['int', 'float'].includes(argType)) inferred = 'float';
+            else throw new Error(`Conflicting argument types for ${fnName} parameter ${paramIndex + 1}: ${inferred} and ${argType} (source:${arg.loc?.start.line || 1}:${(arg.loc?.start.column || 0) + 1})`);
+          } else inferred = argType;
           return;
         }
       }

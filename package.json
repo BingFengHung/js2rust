@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/cli.js",
     "test": "node test/run.js && node test/verify_templates.js",
+    "test:rust": "node test/rust.js",
     "playground": "node playground/server.js"
   },
   "keywords": [

@@ -1,16 +1,6 @@
 import { transpile } from '../src/index.js';
-import fs from 'fs';
-
-const html = fs.readFileSync('playground/index.html', 'utf8');
-const match = html.match(/const TEMPLATES = ({[\s\S]*?^    };)/m);
-if (!match) {
-  console.error("Could not find TEMPLATES in playground/index.html");
-  process.exit(1);
-}
-
-// Evaluate templates object safely
-const getTemplates = new Function(`return ${match[1]};`);
-const templates = getTemplates();
+import { loadTemplates } from './templates.js';
+const templates = loadTemplates();
 
 let count = 0;
 for (const [key, tpl] of Object.entries(templates)) {
