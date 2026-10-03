@@ -6,6 +6,7 @@ const types = {
   '/styles.css': 'text/css; charset=utf-8',
   '/app.js': 'text/javascript; charset=utf-8',
   '/examples-data.js': 'text/javascript; charset=utf-8',
+  '/templates-data.js': 'text/javascript; charset=utf-8',
   '/favicon.svg': 'image/svg+xml',
 };
 const port = Number(process.env.DOCS_PORT || 4173);

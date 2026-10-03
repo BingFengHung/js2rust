@@ -21,6 +21,7 @@
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
     <script defer src="./examples-data.js"></script>
+    <script defer src="./templates-data.js"></script>
     <script defer src="./app.js"></script>
   </head>
   <body>
@@ -44,8 +45,8 @@
           選單 <span aria-hidden="true">＋</span>
         </button>
         <nav id="navigation" aria-label="主要導覽">
-          <a href="#examples">程式碼對照</a><a href="#support">支援範圍</a
-          ><a href="#start">開始使用</a>
+          <a href="#examples">程式碼對照</a><a href="#templates">範本庫</a
+          ><a href="#support">支援範圍</a><a href="#start">開始使用</a>
           <a class="repo-link" href="https://github.com/BingFengHung/js2rust"
             >GitHub <span aria-hidden="true">↗</span></a
           >
@@ -230,6 +231,80 @@ console.<span class="syntax-function">log</span>(doubled);</code></pre>
           ><p class="notice">
             開啟 JavaScript 即可切換完整範例及複製程式碼。目前顯示 map / reduce
             說明範例。
+          </p></noscript
+        >
+      </section>
+
+      <section
+        class="section wrap"
+        id="templates"
+        aria-labelledby="templates-title"
+      >
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">PLAYGROUND / TEMPLATE LIBRARY</p>
+            <h2 id="templates-title">每一個範本，<br />都能從這裡探索。</h2>
+          </div>
+          <p>
+            完整收錄本機 Playground 的範本。<br />瀏覽來源檔案與產出的 Cargo
+            專案，下載後可匯入 Playground。
+          </p>
+        </div>
+        <div class="template-filters">
+          <label
+            >搜尋範本<input
+              id="template-search"
+              type="search"
+              placeholder="例如 map、async、模組"
+          /></label>
+          <label
+            >分類<select id="template-category">
+              <option value="">全部分類</option>
+            </select></label
+          >
+          <p id="template-count" role="status" aria-live="polite"></p>
+        </div>
+        <div class="template-layout">
+          <div
+            id="template-list"
+            class="template-list"
+            role="group"
+            aria-label="選擇 Playground 範本"
+          ></div>
+          <article class="template-detail" aria-labelledby="template-title">
+            <p class="eyebrow" id="template-group"></p>
+            <h3 id="template-title"></h3>
+            <p id="template-note" class="small-note"></p>
+            <div class="template-actions">
+              <button class="button button-dark" id="template-download">
+                下載 JS 專案備份 ↓</button
+              ><a class="text-link" href="#start">啟動本機 Playground ↗</a>
+            </div>
+            <p class="small-note">
+              下載後，在本機 Playground 選擇「匯入專案 → 載入專案備份檔
+              (.json)」。
+            </p>
+            <div class="template-file-controls">
+              <label
+                >檢視語言<select id="template-language">
+                  <option value="files">JavaScript 來源</option>
+                  <option value="projectFiles">Rust / Cargo 專案</option>
+                </select></label
+              ><label>檔案<select id="template-file"></select></label
+              ><button class="copy-button" id="template-copy">
+                複製此檔案 ⧉
+              </button>
+            </div>
+            <pre
+              tabindex="0"
+              aria-label="範本檔案程式碼"
+            ><code id="template-code"></code></pre>
+          </article>
+        </div>
+        <noscript
+          ><p class="notice">
+            開啟 JavaScript 即可搜尋並瀏覽範本。也可在本機 Playground
+            的範本選單查看完整內容。
           </p></noscript
         >
       </section>

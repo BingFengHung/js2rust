@@ -18,6 +18,7 @@ npm run docs:serve
 - `docs/styles.css`：色彩、排版與響應式介面。
 - `docs/app.js`：範例切換、複製、完整 Rust 展開與手機導覽。
 - `scripts/docs-examples.js`：說明頁範例的唯一來源。
+- `docs/templates-data.js`：從 Playground 範本、標題及分類自動產生，包含所有來源檔案及 Cargo 專案；不要直接編輯。範本庫提供搜尋、分類、逐檔檢視與可匯入 Playground 的 JSON 下載。
 - `docs/examples-data.js`：由轉譯器生成；不要直接編輯。
 
 ```bash
@@ -25,7 +26,7 @@ npm run docs:build
 npm run docs:verify
 ```
 
-驗證需要本機 rustc，會編譯／執行每個說明頁範例，與 Node.js 結果對照，並檢查生成檔是否與來源一致。複製 Rust 會取得完整程式碼，包含需要的輔助函式。
+驗證需要本機 rustc，會編譯／執行每個說明頁範例，與 Node.js 結果對照，並檢查範例與完整範本庫的生成檔是否與來源一致。17 個 Playground 範本的 Cargo 編譯／執行由 `npm run test:rust` 驗證。複製 Rust 會取得完整程式碼，包含需要的輔助函式。
 
 ## 發佈至 GitHub Pages
 
