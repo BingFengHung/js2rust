@@ -28,6 +28,16 @@ npm run docs:verify
 
 驗證需要本機 rustc，會編譯／執行每個說明頁範例，與 Node.js 結果對照，並檢查範例與完整範本庫的生成檔是否與來源一致。17 個 Playground 範本的 Cargo 編譯／執行由 `npm run test:rust` 驗證。複製 Rust 會取得完整程式碼，包含需要的輔助函式。
 
+## 網站圖示
+
+`favicon.svg` 是圖示的向量來源：Rust 橘色圓角底、奶白色程式括號與向右箭頭，代表 JavaScript 轉成 Rust。圖形使用 path，不依賴字型；頁首、頁尾共用同一個 SVG。
+
+- `favicon-32.png`：32 × 32 分頁圖示，供 PNG 相容性備援。
+- `apple-touch-icon.png`：180 × 180 iPhone / iPad 主畫面圖示。
+- `icon-512.png`：512 × 512 可重用圖示。
+
+修改 SVG 後，請同步重新輸出以上 PNG 尺寸，保留透明圓角，並檢查 16 / 32px 顯示與 `/js2rust/` 下的相對路徑。
+
 ## 發佈至 GitHub Pages
 
 本次只準備網站與部署流程，沒有自動發佈。完成程式修正 PR 與說明頁 PR 的合併後：
