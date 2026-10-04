@@ -91,6 +91,10 @@ npm start -- test/example.js --check
 
 API 提供 `validateJavaScript(source, { filename })` 與 `validateProject(files)`，回傳 `{ valid, diagnostics }`。診斷包含 `code`、`severity`、`category`、`filename`、`line`、`column` 與結束位置。Playground 的 `POST /api/validate` 可只檢查；`/api/transpile` 在錯誤時回傳 422 與診斷，不回傳 Rust。CLI 錯誤結束碼為 1，`--check` 不寫入 Rust 檔案。
 
+型別推導會追蹤作用域內的變數初始值、別名、函式轉傳與可判定的回傳值；整數／小數混合的陣列會推導為浮點陣列。明確的 `number` 參數、預設值、變數與陣列註記會保留為 Rust `f64`，不再因初始值是整數而被覆蓋。未支援的 union、tuple、any 等註記會明確回報，避免默默退回數值型別。
+
+型別錯誤可附帶 `hint` 與 `related` 來源位置。Playground 可點擊來源跳到宣告所在檔案；CLI 也會印出代碼、修正提示與來源位置。非 void 函式的回傳型別衝突／可落空路徑會提前攔截；回傳路徑分析以直線、if、switch 為主，複雜迴圈請提供明確的末端回傳值。
+
 這是保守的靜態檢查：型別未知、動態資料、別名、副作用與執行時錯誤不能完整判定；沒有明確註記時不保證所有參數型別都能推導。`validateProject` 檢查各檔案及相對函式匯入，完整生成階段仍可能回報更深入的轉譯限制。通過不代表完整 JS 語意或 Rust 編譯一定成功，仍須執行 `npm run test:rust`。
 
 ## 已驗證的方法與範圍

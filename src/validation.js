@@ -111,7 +111,10 @@ export class JavaScriptValidationError extends Error {
     const errors = diagnostics.filter((d) => d.severity === 'error');
     super(
       errors
-        .map((d) => `${d.message} (${d.filename}:${d.line}:${d.column})`)
+        .map(
+          (d) =>
+            `${d.code}: ${d.message} (${d.filename}:${d.line}:${d.column})${d.hint ? `\n  建議：${d.hint}` : ''}${(d.related || []).map((r) => `\n  來源：${r.filename}:${r.line}:${r.column} ${r.message}`).join('')}`,
+        )
         .join('\n'),
     );
     this.name = 'JavaScriptValidationError';
@@ -145,6 +148,7 @@ export function parseJavaScript(source, filename = 'source') {
 
 function normalizeType(value) {
   if (!value) return null;
+  if (value === 'void') return 'void';
   if (
     [
       'number',
@@ -204,13 +208,30 @@ export function analyzeJavaScript(source, options = {}) {
   if (!result.ast) return result;
   const diagnostics = [];
   const paths = new WeakMap();
+  const nodeFiles = new WeakMap();
   const enums = new Set();
+  const namedTypes = new Set();
   const callTypes = new Map();
   const modules = new Map();
+  for (const comment of result.ast.comments || []) {
+    const name = parseJSDoc([comment]).typedef?.name;
+    if (name) namedTypes.add(name);
+  }
   traverse(result.ast, {
     enter(p) {
       paths.set(p.node, p);
+      nodeFiles.set(p.node, filename);
       if (p.isTSEnumDeclaration()) enums.add(p.node.id.name);
+      if (
+        [
+          'ClassDeclaration',
+          'TSEnumDeclaration',
+          'TSInterfaceDeclaration',
+          'TSTypeAliasDeclaration',
+        ].includes(p.node.type) &&
+        p.node.id
+      )
+        namedTypes.add(p.node.id.name);
     },
   });
   const report = (
@@ -219,10 +240,12 @@ export function analyzeJavaScript(source, options = {}) {
     message,
     severity = 'error',
     category = 'javascript',
+    details = {},
   ) =>
-    diagnostics.push(
-      diagnostic(node, code, message, filename, severity, category),
-    );
+    diagnostics.push({
+      ...diagnostic(node, code, message, filename, severity, category),
+      ...details,
+    });
   const bindingFunction = (binding) => {
     if (!binding) return null;
     if (binding.path.isFunctionDeclaration()) return binding.path;
@@ -258,6 +281,10 @@ export function analyzeJavaScript(source, options = {}) {
     if (!ast) return null;
     let program;
     traverse(ast, {
+      enter(p) {
+        paths.set(p.node, p);
+        nodeFiles.set(p.node, resolved);
+      },
       Program(p) {
         program = p;
       },
@@ -328,7 +355,7 @@ export function analyzeJavaScript(source, options = {}) {
         );
         return parameter?.type === 'AssignmentPattern'
           ? infer(parameter.right, fn.scope, next)
-          : null;
+          : inferParameterFromCalls(fn, node.name, next);
       }
       if (binding.path.isVariableDeclarator()) {
         const declaration = binding.path.node;
@@ -369,10 +396,7 @@ export function analyzeJavaScript(source, options = {}) {
     if (node.type === 'CallExpression') {
       if (node.callee.type === 'Identifier') {
         const fn = bindingFunction(scope.getBinding(node.callee.name));
-        return fn
-          ? annotatedType(fn.node.returnType?.typeAnnotation) ||
-              normalizeType(docsFor(fn).returns)
-          : null;
+        return fn ? inferReturn(fn, next) : null;
       }
       if (node.callee.type !== 'MemberExpression') return null;
       const method = node.callee.property.name;
@@ -402,6 +426,109 @@ export function analyzeJavaScript(source, options = {}) {
       }
     }
     return null;
+  }
+  function inferParameterFromCalls(fn, name, seen) {
+    if (!fn?.node.id || seen.has(fn.node)) return null;
+    const binding = fn.parentPath.scope.getBinding(fn.node.id.name);
+    const index = fn.node.params.findIndex((p) => (p.left || p).name === name);
+    let type = null;
+    for (const reference of binding?.referencePaths || []) {
+      const call = reference.parentPath;
+      if (!call.isCallExpression() || call.node.callee !== reference.node)
+        continue;
+      const actual = infer(
+        call.node.arguments[index],
+        call.scope,
+        new Set(seen).add(fn.node),
+      );
+      if (!compatible(actual, type)) return null;
+      type ||= actual;
+    }
+    return type;
+  }
+  function functionReturns(fn) {
+    const returns = [];
+    fn.traverse({
+      ReturnStatement(p) {
+        if (p.getFunctionParent() === fn) returns.push(p);
+      },
+    });
+    return returns;
+  }
+  function inferReturn(fn, seen = new Set()) {
+    const explicit =
+      annotatedType(fn.node.returnType?.typeAnnotation) ||
+      normalizeType(docsFor(fn).returns);
+    if (explicit) return explicit;
+    if (seen.has(fn.node)) return null;
+    const next = new Set(seen).add(fn.node);
+    if (fn.node.body.type !== 'BlockStatement')
+      return infer(fn.node.body, fn.scope, next);
+    const types = functionReturns(fn).map((p) =>
+      p.node.argument ? infer(p.node.argument, p.scope, next) : 'void',
+    );
+    if (!types.length) return 'void';
+    if (types.some((t) => !t) || types.some((t) => !compatible(t, types[0])))
+      return null;
+    return types[0];
+  }
+  function related(node, message) {
+    return diagnostic(
+      node,
+      'TYPE_ORIGIN',
+      message,
+      nodeFiles.get(node) || filename,
+      'info',
+      'compatibility',
+    );
+  }
+  function sequenceFlow(statements) {
+    let outcomes = new Set(['next']);
+    for (const statement of statements) {
+      if (!outcomes.delete('next')) break;
+      for (const outcome of returnFlow(statement)) outcomes.add(outcome);
+    }
+    return outcomes;
+  }
+  function returnFlow(node) {
+    if (!node) return new Set(['next']);
+    if (node.type === 'ReturnStatement')
+      return new Set([node.argument ? 'value' : 'empty']);
+    if (node.type === 'BreakStatement') return new Set(['break']);
+    if (node.type === 'ContinueStatement') return new Set(['continue']);
+    if (node.type === 'BlockStatement') return sequenceFlow(node.body);
+    if (node.type === 'IfStatement') {
+      if (node.test.type === 'BooleanLiteral')
+        return returnFlow(node.test.value ? node.consequent : node.alternate);
+      return new Set([
+        ...returnFlow(node.consequent),
+        ...returnFlow(node.alternate),
+      ]);
+    }
+    if (node.type === 'SwitchStatement') {
+      const outcomes = new Set(node.cases.some((c) => !c.test) ? [] : ['next']);
+      for (let i = 0; i < node.cases.length; i++) {
+        const statements = node.cases.slice(i).flatMap((c) => c.consequent);
+        for (const outcome of sequenceFlow(statements))
+          outcomes.add(outcome === 'break' ? 'next' : outcome);
+      }
+      return outcomes;
+    }
+    // Loops may execute zero times. Require a fallback return after a loop.
+    if (
+      ['ForStatement', 'WhileStatement', 'ForOfStatement'].includes(node.type)
+    )
+      return new Set([
+        'next',
+        ...[...returnFlow(node.body)].filter(
+          (x) => x === 'value' || x === 'empty',
+        ),
+      ]);
+    return new Set(['next']);
+  }
+  function definitelyReturns(node) {
+    const outcomes = returnFlow(node);
+    return outcomes.size === 1 && outcomes.has('value');
   }
   function checkArguments(p, fn) {
     const params = fn.node.params;
@@ -447,10 +574,99 @@ export function analyzeJavaScript(source, options = {}) {
           args[i],
           'JS_ARGUMENT_TYPE',
           `參數 ${name} 預期 ${expected}，實際為 ${actual}。`,
+          'error',
+          'javascript',
+          {
+            hint: '請傳入符合宣告型別的值，或修正函式的型別註記。',
+            related: [related(parameter, `參數 ${name} 的型別來源`)],
+          },
         );
     });
   }
   traverse(result.ast, {
+    TSType(p) {
+      const type = p.node.type;
+      if (
+        [
+          'TSNumberKeyword',
+          'TSStringKeyword',
+          'TSBooleanKeyword',
+          'TSVoidKeyword',
+          'TSArrayType',
+        ].includes(type)
+      )
+        return;
+      if (type === 'TSExpressionWithTypeArguments' && !p.node.typeParameters)
+        return;
+      if (
+        type === 'TSTypeReference' &&
+        p.node.typeName.type === 'Identifier' &&
+        !p.node.typeParameters
+      ) {
+        if (
+          !namedTypes.has(p.node.typeName.name) &&
+          p.scope.getBinding(p.node.typeName.name)?.kind !== 'module'
+        )
+          report(
+            p.node,
+            'RUST_UNKNOWN_TYPE',
+            `找不到具名型別 ${p.node.typeName.name} 的定義。`,
+            'error',
+            'compatibility',
+            { hint: '請在此檔案定義型別，或改用已支援的明確型別。' },
+          );
+        return;
+      }
+      report(
+        p.node,
+        'RUST_UNSUPPORTED_TYPE',
+        `型別註記 ${type} 尚未支援，不能默默替換成數值型別。`,
+        'error',
+        'compatibility',
+        {
+          hint: '請使用明確的 number、string、boolean、陣列或已定義的具名型別。',
+        },
+      );
+    },
+    Function(p) {
+      if (p.node.body?.type !== 'BlockStatement' || p.node.id?.name === 'main')
+        return;
+      const returns = functionReturns(p);
+      let first;
+      for (const ret of returns) {
+        const actual = ret.node.argument
+          ? infer(ret.node.argument, ret.scope)
+          : 'void';
+        if (first && !compatible(actual, first.type)) {
+          report(
+            ret.node,
+            'RUST_RETURN_TYPE',
+            `Conflicting return types：同一函式分別回傳 ${first.type} 與 ${actual}。`,
+            'error',
+            'compatibility',
+            {
+              hint: '請讓各回傳路徑使用相同型別。',
+              related: [related(first.node, '另一個回傳值位於這裡')],
+            },
+          );
+        }
+        if (actual && !first) first = { type: actual, node: ret.node };
+      }
+      const result = inferReturn(p);
+      if (
+        result &&
+        result !== 'void' &&
+        !definitelyReturns(p.node.body)
+      )
+        report(
+          p.node.returnType || p.node,
+          'RUST_MISSING_RETURN',
+          `函式預期回傳 ${result}，但部分路徑可能沒有回傳值；目前無法將 undefined 合併為此 Rust 型別。`,
+          'error',
+          'compatibility',
+          { hint: '請補上最末端的 return，或確保所有條件分支都回傳相同型別。' },
+        );
+    },
     enter(p) {
       if (unsupportedNodes.has(p.node.type))
         report(

@@ -704,6 +704,8 @@
     .js-diagnostics summary { cursor: pointer; color: #8b949e; }
     .diagnostic-item { display: block; width: 100%; text-align: left; background: transparent; border: 0; color: #f85149; padding: 8px 0; cursor: pointer; font: inherit; line-height: 1.7; overflow-wrap: anywhere; }
     .diagnostic-item.warning { color: #d29922; }
+    .diagnostic-item.info { color: #8b949e; padding-left: 16px; }
+    .diagnostic-item { white-space: pre-line; }
     .diagnostic-item:focus-visible { outline: 2px solid #58a6ff; }
     .js-diagnostic-error { text-decoration: underline wavy #f85149; background: #f8514918; }
     .js-diagnostic-warning { text-decoration: underline wavy #d29922; }
@@ -1469,12 +1471,12 @@ function main() {
       currentDiagnostics = diagnostics;
       jsDiagnosticSummary.textContent = summary;
       jsDiagnosticList.replaceChildren();
-      for (const item of diagnostics) {
+      for (const item of diagnostics.flatMap(d => [d, ...(d.related || [])])) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = `diagnostic-item ${item.severity}`;
         const category = item.category === 'compatibility' ? '轉譯支援' : 'JavaScript';
-        button.textContent = `[${item.severity === 'warning' ? '警告' : '錯誤'} · ${category}] ${item.filename}:${item.line}:${item.column} — ${item.message}`;
+        button.textContent = `[${item.severity === 'info' ? '來源' : item.severity === 'warning' ? '警告' : '錯誤'} · ${category}] ${item.filename}:${item.line}:${item.column} — ${item.message}${item.hint ? `\n建議：${item.hint}` : ''}`;
         button.addEventListener('click', () => {
           if (Object.hasOwn(files,item.filename) && activeFile !== item.filename) {
             activeFile = item.filename;

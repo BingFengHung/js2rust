@@ -1,3 +1,37 @@
+import traverseModule from '@babel/traverse';
+
+const traverse = traverseModule.default || traverseModule;
+function annotationType(node) {
+  const type = node?.typeAnnotation?.typeAnnotation || node;
+  if (!type) return null;
+  if (type.type === 'TSArrayType') {
+    const element = annotationType(type.elementType);
+    return element
+      ? `${element === 'float' ? 'number' : element === 'bool' ? 'boolean' : element}[]`
+      : null;
+  }
+  return (
+    {
+      TSNumberKeyword: 'float',
+      TSStringKeyword: 'string',
+      TSBooleanKeyword: 'bool',
+    }[type.type] || null
+  );
+}
+const analysisCache = new WeakMap();
+function analysisFor(ast) {
+  if (!analysisCache.has(ast)) {
+    const calls = [];
+    traverse(ast, {
+      enter(p) {
+        if (p.isCallExpression()) calls.push(p);
+      },
+    });
+    analysisCache.set(ast, { calls });
+  }
+  return analysisCache.get(ast);
+}
+
 /**
  * Smart Type Inference Engine for js-to-rust
  * Infers parameter and variable types without requiring explicit JSDoc annotations.
@@ -7,12 +41,27 @@
  * Common semantic naming conventions for JavaScript parameters
  */
 const NAME_HEURISTICS = [
-  { regex: /^(str|text|msg|message|greet|greeting|name|title|desc|url|word|prefix|suffix)$/i, type: 'string' },
+  {
+    regex:
+      /^(str|text|msg|message|greet|greeting|name|title|desc|url|word|prefix|suffix)$/i,
+    type: 'string',
+  },
   { regex: /^(is|has|can|should|enable|disable)[A-Z]/, type: 'bool' },
   { regex: /^(flag|valid|ok|found|active|ready|done)$/i, type: 'bool' },
-  { regex: /^(nums|numbers|scores|items|list|arr|array|indices|elements)$/i, type: 'int[]' },
-  { regex: /^(count|idx|index|len|length|size|total|sum|num|n|i|j|k|code|status|id|age|year)$/i, type: 'int' },
-  { regex: /^(price|rate|ratio|percent|weight|dist|distance|x|y|z|radius|avg|average)$/i, type: 'float' },
+  {
+    regex: /^(nums|numbers|scores|items|list|arr|array|indices|elements)$/i,
+    type: 'int[]',
+  },
+  {
+    regex:
+      /^(count|idx|index|len|length|size|total|sum|num|n|i|j|k|code|status|id|age|year)$/i,
+    type: 'int',
+  },
+  {
+    regex:
+      /^(price|rate|ratio|percent|weight|dist|distance|x|y|z|radius|avg|average)$/i,
+    type: 'float',
+  },
 ];
 
 /**
@@ -25,16 +74,26 @@ const NAME_HEURISTICS = [
  * @param {object} ast - The root AST Program node
  * @returns {string | null} Inferred type name or null if unknown
  */
-export function inferParameterType(fnName, paramIndex, paramName, paramNode, fnNode, ast) {
+export function inferParameterType(
+  fnName,
+  paramIndex,
+  paramName,
+  paramNode,
+  fnNode,
+  ast,
+) {
   // 1. Check if parameter has default value: function foo(x = "hello")
   if (paramNode.type === 'AssignmentPattern') {
     const defaultVal = paramNode.right;
     const inferred = inferFromLiteral(defaultVal);
-    if (inferred) return inferred;
+    if (inferred) {
+      const called = inferFromCallSites(fnName, paramIndex, ast, fnNode);
+      return mergeTypes(inferred, called) || inferred;
+    }
   }
 
   // 2. Call-Site Analysis: Search callers across the entire program
-  const callSiteType = inferFromCallSites(fnName, paramIndex, ast);
+  const callSiteType = inferFromCallSites(fnName, paramIndex, ast, fnNode);
   if (callSiteType) {
     return callSiteType;
   }
@@ -70,15 +129,15 @@ export function inferFromLiteral(node) {
   if (node.type === 'NumericLiteral') {
     return String(node.value).includes('.') ? 'float' : 'int';
   }
+  if (node.type === 'UnaryExpression' && ['+', '-'].includes(node.operator))
+    return inferFromLiteral(node.argument);
   if (node.type === 'ArrayExpression') {
-    if (node.elements.length > 0) {
-      const first = node.elements[0];
-      if (first.type === 'StringLiteral') return 'string[]';
-      if (first.type === 'NumericLiteral') {
-        return String(first.value).includes('.') ? 'number[]' : 'int[]';
-      }
-    }
-    return 'int[]';
+    const types = node.elements.map(inferFromLiteral);
+    if (!types.length) return 'int[]';
+    if (types.every((t) => ['int', 'float'].includes(t)))
+      return types.includes('float') ? 'number[]' : 'int[]';
+    if (types.every((t) => t === 'string')) return 'string[]';
+    if (types.every((t) => t === 'bool')) return 'boolean[]';
   }
 
   return null;
@@ -87,44 +146,94 @@ export function inferFromLiteral(node) {
 /**
  * Scans the AST to find all calls to fnName(...) and looks at the argument passed at paramIndex
  */
-function inferFromCallSites(fnName, paramIndex, ast) {
-  if (!ast || !ast.program) return null;
-
-  let inferred = null;
-
-  const visit = (node) => {
-    if (!node || typeof node !== 'object') return;
-
+function mergeTypes(a, b) {
+  if (!a) return b;
+  if (!b || a === b) return a;
+  if (['int', 'float'].includes(a) && ['int', 'float'].includes(b))
+    return 'float';
+  return null;
+}
+function knownType(node, scope, ast, seen = new Set()) {
+  if (!node || seen.has(node)) return null;
+  const next = new Set(seen).add(node);
+  const literal = inferFromLiteral(node);
+  if (literal) return literal;
+  if (node.type === 'Identifier') {
+    const binding = scope.getBinding(node.name);
+    if (binding?.path.isVariableDeclarator())
+      return (
+        annotationType(binding.path.node.id) ||
+        knownType(binding.path.node.init, binding.path.scope, ast, next)
+      );
+    if (binding?.kind === 'param') {
+      const fn = binding.path.getFunctionParent();
+      const index = fn.node.params.findIndex(
+        (p) => (p.left || p).name === node.name,
+      );
+      const parameter = fn.node.params[index];
+      const explicit = annotationType(parameter?.left || parameter);
+      if (explicit) return explicit;
+      return inferFromCallSites(fn.node.id?.name, index, ast, fn.node, next);
+    }
+  }
+  if (node.type === 'BinaryExpression') {
     if (
-      node.type === 'CallExpression' &&
-      node.callee.type === 'Identifier' &&
-      node.callee.name === fnName
-    ) {
-      if (node.arguments && node.arguments.length > paramIndex) {
-        const arg = node.arguments[paramIndex];
-        const argType = inferFromLiteral(arg);
-        if (argType) {
-          if (inferred && inferred !== argType) {
-            if (['int', 'float'].includes(inferred) && ['int', 'float'].includes(argType)) inferred = 'float';
-            else throw new Error(`Conflicting argument types for ${fnName} parameter ${paramIndex + 1}: ${inferred} and ${argType} (source:${arg.loc?.start.line || 1}:${(arg.loc?.start.column || 0) + 1})`);
-          } else inferred = argType;
-          return;
-        }
-      }
+      ['==', '===', '!=', '!==', '<', '<=', '>', '>='].includes(node.operator)
+    )
+      return 'bool';
+    const left = knownType(node.left, scope, ast, next),
+      right = knownType(node.right, scope, ast, next);
+    if (node.operator === '+' && (left === 'string' || right === 'string'))
+      return 'string';
+    if (
+      left &&
+      right &&
+      ['int', 'float'].includes(left) &&
+      ['int', 'float'].includes(right)
+    )
+      return ['/', '**'].includes(node.operator)
+        ? 'float'
+        : mergeTypes(left, right);
+  }
+  if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
+    const binding = scope.getBinding(node.callee.name);
+    if (binding?.path.isFunctionDeclaration()) {
+      const fn = binding.path;
+      const explicit = annotationType(fn.node.returnType);
+      if (explicit) return explicit;
+      const returns = [];
+      fn.traverse({
+        ReturnStatement(p) {
+          if (p.getFunctionParent() === fn)
+            returns.push(knownType(p.node.argument, p.scope, ast, next));
+        },
+      });
+      return returns.reduce((type, value) => mergeTypes(type, value), null);
     }
-
-    for (const key of Object.keys(node)) {
-      if (key === 'leadingComments' || key === 'trailingComments') continue;
-      const child = node[key];
-      if (Array.isArray(child)) {
-        child.forEach(visit);
-      } else if (child && typeof child === 'object') {
-        visit(child);
-      }
+  }
+  return null;
+}
+function inferFromCallSites(fnName, paramIndex, ast, fnNode, seen = new Set()) {
+  if (!ast?.program || !fnNode || seen.has(fnNode)) return null;
+  let inferred = null;
+  const next = new Set(seen).add(fnNode);
+  for (const call of analysisFor(ast).calls) {
+    if (call.node.callee.type !== 'Identifier') continue;
+    const binding = call.scope.getBinding(call.node.callee.name);
+    if (binding?.path.node !== fnNode) continue;
+    const arg = call.node.arguments[paramIndex];
+    const type = knownType(arg, call.scope, ast, next);
+    if (!type) continue;
+    const combined = mergeTypes(inferred, type);
+    if (inferred && !combined) {
+      const error = new Error(
+        `Conflicting argument types for ${fnName} parameter ${paramIndex + 1}: ${inferred} and ${type}`,
+      );
+      error.sourceLocation = [arg.loc.start.line, arg.loc.start.column + 1];
+      throw error;
     }
-  };
-
-  visit(ast.program);
+    inferred = combined;
+  }
   return inferred;
 }
 
@@ -142,7 +251,10 @@ function inferFromBodyUsage(paramName, fnNode) {
     // Array indexing: param[i] or param.length
     if (node.type === 'MemberExpression') {
       if (node.object.type === 'Identifier' && node.object.name === paramName) {
-        if (node.computed || (node.property && node.property.name === 'length')) {
+        if (
+          node.computed ||
+          (node.property && node.property.name === 'length')
+        ) {
           inferred = 'int[]';
           return;
         }
@@ -150,10 +262,26 @@ function inferFromBodyUsage(paramName, fnNode) {
     }
 
     // String method calls: param.toLowerCase(), param.trim(), etc.
-    if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
-      if (node.callee.object.type === 'Identifier' && node.callee.object.name === paramName) {
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'MemberExpression'
+    ) {
+      if (
+        node.callee.object.type === 'Identifier' &&
+        node.callee.object.name === paramName
+      ) {
         const method = node.callee.property.name;
-        if (['trim', 'toLowerCase', 'toUpperCase', 'split', 'startsWith', 'endsWith', 'substring'].includes(method)) {
+        if (
+          [
+            'trim',
+            'toLowerCase',
+            'toUpperCase',
+            'split',
+            'startsWith',
+            'endsWith',
+            'substring',
+          ].includes(method)
+        ) {
           inferred = 'string';
           return;
         }

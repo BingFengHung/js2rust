@@ -16,6 +16,66 @@ import { loadTemplates } from './templates.js';
 
 let passed = 0;
 const invalidCases = [
+  ['partial callback return', 'function main(){const values=[1,2];values.forEach(x=>{if(x>1){return x;}});}', 'RUST_MISSING_RETURN'],
+
+  [
+    'switch conditional break return',
+    'function f(n){switch(n){case 1:if(n===1){break;}return 1;default:return 2;}} function main(){f(1);}',
+    'RUST_MISSING_RETURN',
+  ],
+
+  [
+    'unknown named type',
+    'function f(value:Missing){return value;}',
+    'RUST_UNKNOWN_TYPE',
+  ],
+  [
+    'JSDoc void return',
+    '/** @returns {void} */ function f(){return 1;}',
+    'JS_RETURN_TYPE',
+  ],
+
+  [
+    'inferred return argument',
+    'function text(){return "hi";} function twice(x:number){return x*2;} function main(){twice(text());}',
+    'JS_ARGUMENT_TYPE',
+  ],
+  [
+    'missing return path',
+    'function pick(flag){if(flag){return 1;}} function main(){pick(true);}',
+    'RUST_MISSING_RETURN',
+  ],
+  [
+    'explicit missing return',
+    'function pick():number {console.log(1);}',
+    'RUST_MISSING_RETURN',
+  ],
+  [
+    'mixed void return',
+    'function pick(flag){if(flag){return;}return 1;} function main(){pick(true);}',
+    'RUST_RETURN_TYPE',
+  ],
+  [
+    'conflicting returns',
+    'function pick(flag){if(flag){return 1;}return "a";} function main(){pick(true);}',
+    'RUST_RETURN_TYPE',
+  ],
+  [
+    'unsupported union',
+    'function pick(x:number|string){return x;}',
+    'RUST_UNSUPPORTED_TYPE',
+  ],
+  [
+    'unsupported tuple',
+    'function pick(x:[number,string]){return x;}',
+    'RUST_UNSUPPORTED_TYPE',
+  ],
+  [
+    'unsupported any',
+    'function pick(x:any){return x;}',
+    'RUST_UNSUPPORTED_TYPE',
+  ],
+
   ['syntax', 'function main() { const x = ; }', 'JS_SYNTAX'],
   [
     'undefined read',
@@ -207,7 +267,10 @@ const project = {
     'import {add as sum} from "./math.js"; function main(){console.log(sum(1));}',
   'src/math.js': 'export function add(a,b){return a+b;}',
 };
-assert.equal(validateProject(project).diagnostics[0].code, 'RUST_REQUIRED_ARGUMENTS');
+assert.equal(
+  validateProject(project).diagnostics[0].code,
+  'RUST_REQUIRED_ARGUMENTS',
+);
 assert.throws(() => transpileMultiModules(project), JavaScriptValidationError);
 assert.throws(() => generateRustProject(project), JavaScriptValidationError);
 passed++;
@@ -238,6 +301,20 @@ try {
   assert.equal(cli.status, 1);
   assert.match(cli.stderr, /未宣告/);
   assert.equal(fs.readFileSync(output, 'utf8'), 'existing output');
+  fs.writeFileSync(
+    source,
+    'function twice(x:number){return x*2;} function main(){twice("wrong");}',
+  );
+  const typedCheck = spawnSync(
+    process.execPath,
+    ['src/cli.js', source, '--check'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(typedCheck.status, 1);
+  assert.match(typedCheck.stderr, /JS_ARGUMENT_TYPE/);
+  assert.match(typedCheck.stderr, /建議：/);
+  assert.match(typedCheck.stderr, /來源：/);
+  passed++;
   fs.writeFileSync(source, 'function main(){console.log(1);}');
   const check = spawnSync(
     process.execPath,
@@ -250,6 +327,48 @@ try {
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }
+
+const importedMismatch = validateProject({
+  'src/main.js':
+    'import {twice} from "./math.js"; function text(){return "hi";} function main(){twice(text());}',
+  'src/math.js': 'export function twice(x:number){return x*2;}',
+});
+const mismatch = importedMismatch.diagnostics.find(
+  (d) => d.code === 'JS_ARGUMENT_TYPE',
+);
+assert.ok(mismatch.hint);
+assert.equal(mismatch.filename, 'src/main.js');
+assert.equal(mismatch.related[0].filename, 'src/math.js');
+assert.equal(mismatch.related[0].line, 1);
+assert.equal(mismatch.related[0].column, 23);
+passed++;
+for (const source of [
+  'function f(n){switch(n){case 1:case 2:return 1;default:return 2;}} function main(){f(1);}',
+  'function pick(flag){if(flag){return 1;}else{return 2;}} function main(){pick(true);}',
+  'function pick(flag){if(flag){return 1;}return 2;} function main(){pick(true);}',
+  'function main(){let x:number=1;x=1.5;x+=1;x++;console.log(x);}',
+]) {
+  assert.equal(validateJavaScript(source).valid, true, source);
+  passed++;
+}
+
+const scopedAST = (await import('@babel/parser')).parse(
+  'function f(x){return x;} function other(){function f(x){return x;} f("text");} function main(){f(1.5);}',
+  { sourceType: 'module' },
+);
+const inferParameterType = (await import('../src/inference.js'))
+  .inferParameterType;
+const outer = scopedAST.program.body[0];
+assert.equal(
+  inferParameterType('f', 0, 'x', outer.params[0], outer, scopedAST),
+  'float',
+);
+const inner = scopedAST.program.body[1].body.body[0];
+assert.equal(
+  inferParameterType('f', 0, 'x', inner.params[0], inner, scopedAST),
+  'string',
+);
+passed++;
 
 const server = createPlaygroundServer();
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
