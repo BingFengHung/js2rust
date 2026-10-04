@@ -29,7 +29,8 @@ export const RUST_TYPE_MAP = {
   'Array<number>': '&[f64]',
   'Array<int>': '&[i64]',
   'Array<i64>': '&[i64]',
-  'string[]': '&[&str]',
+  'string[]': '&[String]',
+  'boolean[]': '&[bool]',
 
   // Void
   'void': '()',

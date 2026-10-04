@@ -34,8 +34,8 @@ function executeRust(source, allowFailure = false) {
   return run;
 }
 try {
-  for (const [name, source] of executionCases) {
-    const expected = javascriptOutput(source);
+  for (const [name, source, javascript = source] of executionCases) {
+    const expected = javascriptOutput(javascript);
     const run = executeRust(transpile(source));
     const actual = run.stdout.replaceAll('\r\n', '\n').split('\n').map(canonical).join('\n');
     assert.equal(actual, expected, `${name}: JavaScript and Rust outputs differ`);

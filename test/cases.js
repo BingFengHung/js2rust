@@ -1,6 +1,24 @@
 // Every ordinary case is executed by Node.js and by compiled Rust.
 const main = body => `function main() { ${body} }`;
 export const executionCases = [
+  ['promoted numeric default', 'function twice(value=1){return value*2;} function main(){console.log(twice(1.5));console.log(twice());}'],
+
+  ['typed string reassignment', 'function main(){let text:string="a";text+="b";text="c";console.log(text);}', 'function main(){let text="a";text+="b";text="c";console.log(text);}'],
+
+  ['typed local passed to inferred function', 'function twice(value){return value*2;} function main(){const value:number=1;console.log(twice(value));}', 'function twice(value){return value*2;} function main(){const value=1;console.log(twice(value));}'],
+  ['string array parameter', 'function decorate(values){return values.map(value=>value+"!");} function main(){console.log(decorate(["a","b"]));}'],
+  ['boolean array parameter', 'function check(values){return values.every(value=>value);} function main(){console.log(check([true,false]));}'],
+
+  ['variable float argument', 'function twice(value){return value*2;} function main(){const rate=1.5;console.log(twice(rate));}'],
+  ['variable string argument', 'function echo(value){return value;} function main(){const word="hello";console.log(echo(word));}'],
+  ['variable alias argument', 'function twice(value){return value*2;} function main(){const rate=1.5;const alias=rate;console.log(twice(alias));}'],
+  ['forwarded parameter', 'function twice(value){return value*2;} function forward(value){return twice(value);} function main(){const rate=1.5;console.log(forward(rate));}'],
+  ['mixed numeric array parameter', 'function total(values){return values.reduce((s,x)=>s+x,0);} function main(){console.log(total([1,1.5]));}'],
+  ['return value argument', 'function value(){return 1.5;} function twice(value){return value*2;} function main(){console.log(twice(value()));}'],
+  ['typed numeric local', 'function value(){let x: number=1;x=1.5;x+=1;x++;return x;} function main(){console.log(value());}', 'function value(){let x=1;x=1.5;x+=1;x++;return x;} function main(){console.log(value());}'],
+  ['typed numeric array', 'function main(){const values: number[]=[1,2];values.push(1.5);console.log(values);}', 'function main(){const values=[1,2];values.push(1.5);console.log(values);}'],
+  ['typed default parameter', 'function value(x: number=1){return x+0.5;} function main(){console.log(value());}', 'function value(x=1){return x+0.5;} function main(){console.log(value());}'],
+
   ['precedence', main('console.log((1 + 2) * 3); console.log(10 - (6 - 2)); console.log(-(1 + 2));')],
   ['division and floor', main('console.log(5 / 2); console.log(Math.floor(-1.5)); console.log(Math.floor(1.9));')],
   ['string return', 'function greet() { return "hello"; } function main() { console.log(greet()); }'],

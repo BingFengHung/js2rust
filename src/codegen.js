@@ -197,7 +197,7 @@ export class RustEmitter {
       if (!node || typeof node !== 'object') return;
       if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'ClassDeclaration'].includes(node.type)) return;
       if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier') {
-        this.scopes.at(-1).set(node.id.name, this.inferExpressionType(node.init));
+        this.scopes.at(-1).set(node.id.name, node.id.typeAnnotation ? this.mapTsType(node.id.typeAnnotation.typeAnnotation) : this.inferExpressionType(node.init));
       }
       for (const [key, value] of Object.entries(node)) {
         if (['loc', 'leadingComments', 'trailingComments'].includes(key)) continue;
@@ -222,6 +222,9 @@ export class RustEmitter {
   }
 
   emitExpected(node, type) {
+    if (node?.type === 'ArrayExpression' && type?.startsWith('Vec<')) {
+      return `vec![${node.elements.map(element => this.emitExpected(element, this.elementType(type))).join(', ')}]`;
+    }
     const code = this.emit(node);
     const actual = this.inferExpressionType(node);
     if (type === 'String' && this.isString(actual) && actual !== 'String') return `(${code}).to_string()`;
@@ -608,7 +611,8 @@ export class RustEmitter {
           const isMut = mutatedParams.has(name);
 
           // 1. Try JSDoc first
-          let rawType = param.typeAnnotation ? this.mapTsType(param.typeAnnotation.typeAnnotation) : jsdoc.params[name];
+          const parameter = param.left || param;
+          let rawType = parameter.typeAnnotation ? this.mapTsType(parameter.typeAnnotation.typeAnnotation) : jsdoc.params[name];
 
           // 2. If no JSDoc, run Smart Type Inference!
           if (!rawType) {
@@ -813,7 +817,7 @@ export class RustEmitter {
         return this.emitUpdateExpression(node);
 
       case 'AssignmentExpression':
-        return `${this.emit(node.left)} ${node.operator} ${this.emit(node.right)}`;
+        return `${this.emit(node.left)} ${node.operator} ${this.emitExpected(node.right, node.operator === '+=' && this.isString(this.inferExpressionType(node.left)) ? '&str' : this.inferExpressionType(node.left))}`;
 
       case 'ConditionalExpression':
         return `if ${this.emit(node.test)} { ${this.emit(node.consequent)} } else { ${this.emit(node.alternate)} }`;
@@ -1400,11 +1404,12 @@ export class RustEmitter {
       }
       const mutPrefix = needsMut ? 'let mut ' : 'let ';
       const emptyArray = decl.init?.type === 'ArrayExpression' && decl.init.elements.length === 0;
-      const inferredType = emptyArray ? `Vec<${this.inferEmptyElement(decl.id.name) || this.defaultNumberType}>` : this.inferExpressionType(decl.init);
+      const annotated = decl.id.typeAnnotation ? this.mapTsType(decl.id.typeAnnotation.typeAnnotation) : null;
+      const inferredType = annotated || (emptyArray ? `Vec<${this.inferEmptyElement(decl.id.name) || this.defaultNumberType}>` : this.inferExpressionType(decl.init));
       if (decl.id.name) this.scopes.at(-1).set(decl.id.name, inferredType);
-      const initVal = decl.init ? ` = ${this.emit(decl.init)}` : '';
+      const initVal = decl.init ? ` = ${annotated ? this.emitExpected(decl.init, annotated) : this.emit(decl.init)}` : '';
       // Empty arrays used for thread handles must remain inferable from later pushes.
-      return `${this.indent()}${mutPrefix}${varName}${inferredType?.startsWith('Vec<') && !this.isHandleArray(decl.id.name) ? `: ${inferredType}` : ''}${initVal};`;
+      return `${this.indent()}${mutPrefix}${varName}${(annotated || inferredType?.startsWith('Vec<')) && !this.isHandleArray(decl.id.name) ? `: ${inferredType}` : ''}${initVal};`;
     });
     return decls.join('\n');
   }
@@ -1573,8 +1578,9 @@ export class RustEmitter {
 
   emitUpdateExpression(node) {
     const arg = this.emit(node.argument);
-    if (node.operator === '++') return `${arg} += 1`;
-    if (node.operator === '--') return `${arg} -= 1`;
+    const one = this.emitExpected({ type: 'NumericLiteral', value: 1 }, this.inferExpressionType(node.argument));
+    if (node.operator === '++') return `${arg} += ${one}`;
+    if (node.operator === '--') return `${arg} -= ${one}`;
     return `${arg} ${node.operator}`;
   }
 
