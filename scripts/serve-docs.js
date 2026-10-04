@@ -8,6 +8,9 @@ const types = {
   '/examples-data.js': 'text/javascript; charset=utf-8',
   '/templates-data.js': 'text/javascript; charset=utf-8',
   '/favicon.svg': 'image/svg+xml',
+  '/favicon-32.png': 'image/png',
+  '/apple-touch-icon.png': 'image/png',
+  '/icon-512.png': 'image/png',
 };
 const port = Number(process.env.DOCS_PORT || 4173);
 const server = http.createServer(async (request, response) => {

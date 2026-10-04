@@ -91,19 +91,10 @@ button {
   letter-spacing: -1px;
 }
 .brand-mark {
-  font-family: Georgia, serif;
-  font-style: italic;
-  background: var(--rust);
-  color: var(--paper);
-  font-weight: bold;
-  font-size: 27px;
   width: 44px;
   height: 44px;
-  display: grid;
-  place-items: center;
-  border-radius: 9px;
-  letter-spacing: -2px;
-  padding-right: 3px;
+  display: block;
+  flex: 0 0 auto;
 }
 .brand-two {
   color: var(--rust);
@@ -844,8 +835,6 @@ h2 {
 .site-footer .brand-mark {
   width: 31px;
   height: 31px;
-  font-size: 22px;
-  border-radius: 6px;
 }
 .site-footer p {
   font: 10px var(--mono);
@@ -987,7 +976,6 @@ h2 {
   .brand-mark {
     width: 36px;
     height: 36px;
-    font-size: 25px;
   }
   .version {
     font-size: 9px;
