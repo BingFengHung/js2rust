@@ -27,7 +27,7 @@ npm run docs:build
 npm run docs:verify
 ```
 
-驗證需要本機 rustc，會編譯／執行每個說明頁範例，與 Node.js 結果對照，並檢查範例與完整範本庫的生成檔是否與來源一致。17 個 Playground 範本的 Cargo 編譯／執行由 `npm run test:rust` 驗證。複製 Rust 會取得完整程式碼，包含需要的輔助函式。
+驗證需要本機 rustc，會編譯／執行每個說明頁範例，與 Node.js 結果對照，並檢查範例與完整範本庫的生成檔是否與來源一致。20 個 Playground 範本的 Cargo 編譯／執行由 `npm run test:rust` 驗證，包含資料方法、缺值及執行對照的新範本。複製 Rust 會取得完整程式碼，包含需要的輔助函式。
 
 ## 網站圖示
 
@@ -41,7 +41,7 @@ npm run docs:verify
 
 ## 發佈至 GitHub Pages
 
-本次只準備網站與部署流程，沒有自動發佈。完成程式修正 PR 與說明頁 PR 的合併後：
+網站已設定以 GitHub Actions 部署。更新合併到 main 後：
 
 1. 在儲存庫 **Settings → Pages → Build and deployment → Source** 選擇 **GitHub Actions**。
 2. 進入 **Actions → Deploy documentation to GitHub Pages → Run workflow**，選擇 `main`。

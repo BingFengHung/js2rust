@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { transpile, transpileMultiModules, generateRustProject } from '../src/index.js';
 import { executionCases, diagnosticCases } from './cases.js';
 import { loadTemplates } from './templates.js';
+import { dataExecutionCases, dataDiagnosticCases } from './data-cases.js';
 
 for (const tool of ['rustc', 'cargo']) {
   const result = spawnSync(tool, ['--version'], { encoding: 'utf8' });
@@ -34,7 +35,7 @@ function executeRust(source, allowFailure = false) {
   return run;
 }
 try {
-  for (const [name, source, javascript = source] of executionCases) {
+  for (const [name, source, javascript = source] of [...executionCases, ...dataExecutionCases]) {
     const expected = javascriptOutput(javascript);
     const run = executeRust(transpile(source));
     const actual = run.stdout.replaceAll('\r\n', '\n').split('\n').map(canonical).join('\n');
@@ -42,7 +43,7 @@ try {
     console.log(`  ✓ ${name} — compiled, executed, matched Node.js`);
     passed++;
   }
-  for (const [name, source, error] of diagnosticCases) {
+  for (const [name, source, error] of [...diagnosticCases, ...dataDiagnosticCases]) {
     assert.throws(() => transpile(source), error);
     console.log(`  ✓ ${name} — explicit diagnostic`);
     passed++;

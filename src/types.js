@@ -47,6 +47,11 @@ export function mapToRustType(jsType, isReturn = false, isMut = false) {
   if (!jsType) return isMut ? '&mut f64' : 'f64';
 
   const trimmed = jsType.trim();
+  if (trimmed.includes('|')) {
+    const concrete = trimmed.split('|').map(t => t.trim()).filter(t => !['null', 'undefined'].includes(t));
+    if (concrete.length === 1) return `__js2rust::Maybe<${mapToRustType(concrete[0], true).replace(/^&(?:'static )?str$/, 'String')}>`;
+  }
+  if (/^__js2rust::(?:Map|Set)</.test(trimmed) && !isReturn) return `&${isMut ? 'mut ' : ''}${trimmed}`;
 
   // If return type is slice &[T], convert to owned Vec<T>
   if (isReturn) {

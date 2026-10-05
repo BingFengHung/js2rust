@@ -12,7 +12,11 @@ import {
   generateRustProject,
   validateJavaScript,
   validateProject,
+  transpileMultiModulesWithSourceMap,
+  generateRustProjectWithSourceMap,
+  mapRustDiagnostics,
 } from '../src/index.js';
+import { prepareComparison } from '../src/comparison.js';
 import { diagnosticsFromError } from '../src/validation.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -35,7 +39,7 @@ export function createPlaygroundServer() {
     // 1. Transpile API (Supports both single code and multi-module files)
     if (
       req.method === 'POST' &&
-      ['/api/transpile', '/api/validate'].includes(req.url)
+      ['/api/transpile', '/api/validate', '/api/prepare-comparison', '/api/map-diagnostics'].includes(req.url)
     ) {
       let body = '';
       req.on('data', (chunk) => {
@@ -46,6 +50,12 @@ export function createPlaygroundServer() {
           const payload = JSON.parse(body);
           if (!payload || typeof payload !== 'object' || Array.isArray(payload))
             throw new TypeError('請提供 code 或 files。');
+          if (req.url === '/api/map-diagnostics') {
+            if (typeof payload.stderr !== 'string' || !payload.sourceMaps || typeof payload.sourceMaps !== 'object') throw new TypeError('請提供 stderr 與 sourceMaps。');
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ diagnostics: mapRustDiagnostics(payload.stderr, payload.sourceMaps) }));
+            return;
+          }
           if (
             payload.files !== undefined &&
             (!payload.files ||
@@ -58,6 +68,12 @@ export function createPlaygroundServer() {
             throw new TypeError('files 必須是檔名對應程式碼字串的物件。');
           if (payload.files === undefined && typeof payload.code !== 'string')
             throw new TypeError('code 必須是字串。');
+          if (req.url === '/api/prepare-comparison') {
+            const comparison = prepareComparison(payload.files || { [payload.filename || 'main.js']: payload.code }, payload);
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify(comparison));
+            return;
+          }
           const validation = payload.files
             ? validateProject(payload.files)
             : validateJavaScript(payload.code, {
@@ -80,17 +96,11 @@ export function createPlaygroundServer() {
           }
           let rust = '';
           let projectFiles = {};
-          if (payload.files && typeof payload.files === 'object') {
-            rust = transpileMultiModules(payload.files);
-            projectFiles = generateRustProject(payload.files);
-          } else {
-            rust = transpile(payload.code, {
-              filename: payload.filename || 'main.js',
-            });
-            projectFiles = generateRustProject({
-              [payload.filename || 'main.js']: payload.code,
-            });
-          }
+          const sourceFiles = payload.files || { [payload.filename || 'main.js']: payload.code };
+          const merged = transpileMultiModulesWithSourceMap(sourceFiles);
+          const project = generateRustProjectWithSourceMap(sourceFiles);
+          rust = merged.code;
+          projectFiles = project.projectFiles;
           res.writeHead(200, {
             'Content-Type': 'application/json; charset=utf-8',
           });
@@ -100,6 +110,8 @@ export function createPlaygroundServer() {
               projectFiles,
               diagnostics: validation.diagnostics,
               valid: true,
+              sourceMap: merged.sourceMap,
+              sourceMaps: project.sourceMaps,
             }),
           );
         } catch (err) {
@@ -150,6 +162,11 @@ export function createPlaygroundServer() {
     }
 
     // 3. Serve Frontend HTML
+    if (req.method === 'GET' && ['/history.js', '/comparison-values.js', '/compare-worker.js'].includes(req.url)) {
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+      res.end(fs.readFileSync(path.join(__dirname, req.url.slice(1)), 'utf8'));
+      return;
+    }
     if (
       req.method === 'GET' &&
       (req.url === '/' || req.url === '/index.html')

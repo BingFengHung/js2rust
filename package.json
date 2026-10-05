@@ -9,8 +9,8 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "node test/run.js && node test/verify_templates.js && node test/validation.js",
-    "test:rust": "node test/rust.js",
+    "test": "node test/run.js && node test/verify_templates.js && node test/validation.js && node test/features.js",
+    "test:rust": "node test/rust.js && node test/comparison-rust.js",
     "playground": "node playground/server.js",
     "docs:build": "node scripts/build-docs.js",
     "docs:verify": "node scripts/build-docs.js --verify",
@@ -26,6 +26,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@babel/generator": "^7.29.8",
     "@babel/parser": "^7.29.9",
     "@babel/traverse": "^7.29.8"
   }

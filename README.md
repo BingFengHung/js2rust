@@ -91,7 +91,7 @@ npm start -- test/example.js --check
 
 API 提供 `validateJavaScript(source, { filename })` 與 `validateProject(files)`，回傳 `{ valid, diagnostics }`。診斷包含 `code`、`severity`、`category`、`filename`、`line`、`column` 與結束位置。Playground 的 `POST /api/validate` 可只檢查；`/api/transpile` 在錯誤時回傳 422 與診斷，不回傳 Rust。CLI 錯誤結束碼為 1，`--check` 不寫入 Rust 檔案。
 
-型別推導會追蹤作用域內的變數初始值、別名、函式轉傳與可判定的回傳值；整數／小數混合的陣列會推導為浮點陣列。明確的 `number` 參數、預設值、變數與陣列註記會保留為 Rust `f64`，不再因初始值是整數而被覆蓋。未支援的 union、tuple、any 等註記會明確回報，避免默默退回數值型別。
+型別推導會追蹤作用域內的變數初始值、別名、函式轉傳與可判定的回傳值；整數／小數混合的陣列會推導為浮點陣列。明確的 `number` 參數、預設值、變數與陣列註記會保留為 Rust `f64`。支援一種具體型別搭配 `null`／`undefined` 的 union，以及 `Map<K,V>`、`Set<T>`；其他 union、tuple、any 等註記會明確回報。
 
 型別錯誤可附帶 `hint` 與 `related` 來源位置。Playground 可點擊來源跳到宣告所在檔案；CLI 也會印出代碼、修正提示與來源位置。非 void 函式的回傳型別衝突／可落空路徑會提前攔截；回傳路徑分析以直線、if、switch 為主，複雜迴圈請提供明確的末端回傳值。
 
@@ -108,14 +108,26 @@ API 提供 `validateJavaScript(source, { filename })` 與 `validateProject(files
 | `splice` | 修改原陣列並回傳移除元素、插入／替換、負索引、省略 deleteCount、邊界截斷 |
 | `slice` | 回傳獨立陣列、負索引、起訖邊界截斷 |
 | `push`、`pop`、`includes`、`indexOf`、`join` | 多元素 push 的長度回傳、空陣列 pop、起始索引、includes 的 NaN 比對 |
+| `sort`、`reverse` | 修改原陣列、讀取方法鏈、穩定排序；預設 sort 使用 UTF-16 字串順序，數值排序需比較函式 |
+| `flat` | 新陣列、深度 0／1／2／Infinity、負數及小數深度；深度需要數值字面值 |
+| `Map`、`Set`、`Array.from` | 插入順序、重複值、NaN／±0、set／add／get／has／delete／clear／size、keys／values |
+| `null`、`undefined`、`??` | 區別兩種缺值、延遲計算備用值、保留 0／false／空字串、條件及 guard clause 型別縮小 |
 
-這是具有明確型別的 JavaScript 子集，並非完整 JavaScript 執行環境。陣列需使用相同型別的元素；回呼目前需內嵌函式，支援值／索引，reduce 另有累加器，不支援回呼的 array 參數或修改來源陣列。`find`／`pop` 的缺值以 Rust `Option` 表示。
+這是具有明確型別的 JavaScript 子集，並非完整 JavaScript 執行環境。陣列需使用相同型別的元素；回呼目前需內嵌函式，支援值／索引，reduce 另有累加器，不支援回呼的 array 參數或修改來源陣列。`find`／`pop`／Map.get 的缺值以 Rust `Maybe<T>` 表示，保留 `null` 與 `undefined` 的差異。可用 `if (value != null)`、適用的 `!== undefined` 或 `??` 後再運算；仍可能為 null 的值需要檢查兩種缺值。
 
-`split` 不支援正規表示式；空分隔符遇到 emoji 等非 BMP 字元會明確在執行時失敗，因為 Rust String 無法表示 JavaScript 分割後的獨立 UTF-16 surrogate。未支援的方法（例如 sort、reverse、flat）會回報錯誤。
+`split` 不支援正規表示式；空分隔符遇到 emoji 等非 BMP 字元會明確在執行時失敗，因為 Rust String 無法表示 JavaScript 分割後的獨立 UTF-16 surrogate。sort 比較函式不能修改外部資料或呼叫有副作用的函式；其呼叫次數不保證與 JS 引擎相同。sort／reverse 後接修改方法需改成對原陣列的分開敘述。Map 的 key／value 與 Set 元素支援 number、string、boolean，Map value 另支援缺值 union；空集合需明確型別或可推導的 set／add。keys()／values() 需立即以 Array.from() 取出，未支援 live iterator。共享別名後再修改會回報限制，請以 slice() 建立獨立副本。flatMap、動態 flat 深度、optional chaining 與物件參照身分仍未支援。
 
 整數預設為 i64，除法及浮點運算使用 f64；整數溢位、非有限值轉整數、JavaScript 隱式型別轉換及物件身分比較尚未等同完整 JS 語意。模組支援明確副檔名的相對具名／預設函式匯入；不支援 namespace imports、Node.js 內建模組或任意 npm 套件。建立 HTTP Server 仍需額外的 Rust 網路 API 對接。
 
 Playground 可作為主要編輯介面，請定期匯出專案備份，並將程式碼與測試提交到 Git。正式驗證以本機 `test:rust` 為準；在線執行按鈕會將 Rust 程式碼傳送到官方 Rust Playground。
+
+## Playground 的對照、錯誤定位與版本歷史
+
+「JS / Rust 對照」可選入口檔案與同步函式，輸入最多 20 組 JSON 參數陣列，比較回傳值和每次 console.log 的值。例如載入「執行對照」範本，函式填 `summarize`，案例填 `[[[1,2,3]], [[0]], [[]]]`。JavaScript 會在獨立 Worker 執行，超過 3 秒即停止；按下開始後，Rust 會傳至官方 Rust Playground。伺服器只準備程式，不執行 JS 或本機 Cargo。回傳結果保留 undefined、NaN、Infinity 與負零的差異；JSON 輸入不支援負零，請在測試函式內建立。比較支援基本資料、陣列、Map、Set，未支援非同步、類別／物件回傳及 Rust 專用 API。
+
+在線執行的 Rust 錯誤會自動對應到 JS。下載 Cargo 專案後，也可按「Rust 錯誤定位」，貼上目前產物的 stderr 或 `--error-format=json` 訊息；編譯器在輔助函式／生成結構中的錯誤會標示 Rust 位置。API 新增 `transpileWithSourceMap`、`transpileMultiModulesWithSourceMap`、`generateRustProjectWithSourceMap` 與 `mapRustDiagnostics`；既有字串 API 保持不變。
+
+「版本歷史」提供自動儲存、最多 20 份快照、逐檔前後版本查看與還原。切換範本、匯入及還原前會保留目前版本，儲存損壞時可回復上次有效備份。儲存空間不足會顯示提示；紀錄僅存在目前瀏覽器，匯出 JSON 和 Git 仍是跨裝置的備份方式。
 
 
 ---
@@ -212,6 +224,9 @@ js-to-rust/
 ├── AGENTS.md           # 開發與驗證規範
 ├── src/
 │   ├── runtime.js      # JS 方法語意的 Rust 輔助函式
+│   ├── source-map.js   # Rust 錯誤與 JS 來源位置映射
+│   ├── comparison.js   # 對照程式準備（不執行來源）
+│   ├── data-types.js   # 缺值、集合與資料型別工具
 │   ├── inference.js    # 參數型別推導
 │   ├── modules.js      # 模組與 Cargo 專案生成
 │   ├── types.js        # JSDoc 型別解析與 Rust 型別映射字典
@@ -233,7 +248,8 @@ js-to-rust/
 - [x] JSDoc 物件結構體映射
 - [x] 常用陣列／字串方法及真實 Rust 執行回歸
 - [ ] 效能 Benchmark 測試工具（Node.js vs 編譯出的 Rust 原生二進位效能比較）
-- [x] 網頁版互動式 Playground（Monaco Editor 即時預覽）
+- [x] 網頁版互動式 Playground（CodeMirror 即時預覽、對照與版本歷史）
+- [x] Rust 診斷來源映射、缺值與型別縮小、排序／集合資料方法
 - [ ] 擴充 UTF-16、動態型別與回呼修改來源陣列等相容性
 
 ---
@@ -241,4 +257,3 @@ js-to-rust/
 ## 📄 授權 (License)
 
 MIT License
-

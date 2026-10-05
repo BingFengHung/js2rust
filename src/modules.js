@@ -8,6 +8,7 @@ import path from 'node:path';
 import { transpile } from './index.js';
 import { RustEmitter } from './codegen.js';
 import { assertValid, validateProject } from './validation.js';
+import { RUST_RUNTIME } from './runtime.js';
 
 /**
  * Normalizes a file path by removing leading './' or 'src/'
@@ -126,6 +127,12 @@ export function transpileMultiModules(files, options = {}) {
   const mainFilename = findMainFilename(files);
 
   let mainRust = '';
+  let needsRuntime = false;
+  const sharedRuntime = (code, main = false) => {
+    if (!code.includes(RUST_RUNTIME.trim())) return code;
+    needsRuntime = true;
+    return `${main ? '' : 'use crate::__js2rust;\n'}${code.replace(RUST_RUNTIME.trim(), '')}`;
+  };
 
   // Build hierarchical module tree
   const rootModule = { children: {} };
@@ -136,7 +143,7 @@ export function transpileMultiModules(files, options = {}) {
 
     if (rawPath === mainFilename) {
       // Transpile main file (this will automatically convert `import` to `use path::item;`)
-      mainRust = transpile(code, optionsForFile(rawPath, moduleOptions));
+      mainRust = sharedRuntime(transpile(code, optionsForFile(rawPath, moduleOptions)), true);
     } else {
       // It's a module file (may be inside nested folders like utils/math.js)
       const parts = norm
@@ -144,7 +151,7 @@ export function transpileMultiModules(files, options = {}) {
         .split('/')
         .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
 
-      const compiledCode = transpile(code, optionsForFile(rawPath, moduleOptions));
+      const compiledCode = sharedRuntime(transpile(code, optionsForFile(rawPath, moduleOptions)));
 
       // Insert into module tree
       let curr = rootModule;
@@ -185,6 +192,7 @@ export function transpileMultiModules(files, options = {}) {
   const modulesRust = renderTree(rootModule);
 
   let finalOutput = '#![allow(unused_imports, unused_variables, dead_code, non_snake_case)]\n\n';
+  if (needsRuntime) finalOutput += RUST_RUNTIME + '\n';
   if (modulesRust.trim()) {
     finalOutput += `// === Modules & Nested Folders ===\n${modulesRust}`;
   }
@@ -238,6 +246,7 @@ ${dependencies}`;
   // folderDeclarations: Map<folderPath, Set<childModName>>
   const folderDeclarations = new Map();
   const topLevelMods = new Set();
+  let needsRuntime = false;
 
   for (const rawPath of filenames) {
     if (rawPath === mainFilename) continue;
@@ -249,10 +258,15 @@ ${dependencies}`;
       .map((s) => s.replace(/[^a-zA-Z0-9_]/g, '_'));
 
     const code = files[rawPath];
-    const compiledCode = transpile(code, optionsForFile(rawPath, moduleOptions));
+    let compiledCode = transpile(code, optionsForFile(rawPath, moduleOptions));
+    if (compiledCode.includes(RUST_RUNTIME.trim())) { needsRuntime = true; compiledCode = 'use crate::__js2rust;\n' + compiledCode.replace(RUST_RUNTIME.trim(), ''); }
 
     // rustFilePath: e.g. 'src/utils/math.rs'
-    const rustFilePath = `src/${parts.join('/')}.rs`;
+    // A top-level lib.rs is auto-built by Cargo as a separate crate. Use a module
+    // directory instead, and also co-locate files that have child modules.
+    const stem = parts.join('/');
+    const hasChildren = filenames.some(f => normalizePath(f).replace(/\.(js|ts|mjs)$/, '').startsWith(norm.replace(/\.(js|ts|mjs)$/, '') + '/'));
+    const rustFilePath = stem === 'lib' || hasChildren ? `src/${stem}/mod.rs` : `src/${stem}.rs`;
     project[rustFilePath] = compiledCode;
 
     // Track top-level module
@@ -274,14 +288,16 @@ ${dependencies}`;
     const modRsPath = `${folderPath}/mod.rs`;
     const sortedMods = Array.from(submodules).sort();
     const modContent = sortedMods.map((m) => `pub mod ${m};`).join('\n') + '\n';
-    project[modRsPath] = modContent;
+    project[modRsPath] = modContent + (project[modRsPath] || '');
   }
 
   // 3. Generate src/main.rs
   const mainJsCode = files[mainFilename] || '';
-  const mainCompiled = transpile(mainJsCode, optionsForFile(mainFilename, moduleOptions));
+  let mainCompiled = transpile(mainJsCode, optionsForFile(mainFilename, moduleOptions));
+  if (mainCompiled.includes(RUST_RUNTIME.trim())) { needsRuntime = true; mainCompiled = mainCompiled.replace(RUST_RUNTIME.trim(), ''); }
 
   let mainRsHeader = '#![allow(unused_imports, unused_variables, dead_code, non_snake_case)]\n\n';
+  if (needsRuntime) mainRsHeader += RUST_RUNTIME + '\n';
   if (topLevelMods.size > 0) {
     const sortedTopMods = Array.from(topLevelMods).sort();
     mainRsHeader += sortedTopMods.map((m) => `mod ${m};`).join('\n') + '\n\n';

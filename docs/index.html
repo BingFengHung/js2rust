@@ -375,7 +375,7 @@ console.<span class="syntax-function">log</span>(doubled);</code></pre>
               </div>
               <p>
                 map、reduce、filter、forEach、some、every、find、slice、splice、push、pop、includes、indexOf、join
-                與字串 split。
+                與字串 split，另支援 sort、reverse、flat 及 Map / Set。
               </p>
               <span class="support-status">已驗證</span>
             </article>
@@ -385,7 +385,7 @@ console.<span class="syntax-function">log</span>(doubled);</code></pre>
                 <h3>型別、物件與模組</h3>
               </div>
               <p>
-                JSDoc 結構體、類別、TS number、enum、相對具名／預設函式匯入。
+                JSDoc 結構體、類別、TS number、缺值 union 與 ??、enum、相對具名／預設函式匯入。Playground 提供 JS / Rust 執行對照、編譯錯誤定位與版本快照。
               </p>
               <span class="support-status">範本與案例驗證</span>
             </article>
@@ -408,6 +408,7 @@ console.<span class="syntax-function">log</span>(doubled);</code></pre>
             <ul>
               <li>陣列使用相同型別的元素。</li>
               <li>方法回呼使用內嵌函式；不支援修改來源陣列。</li>
+              <li>排序比較函式需無副作用；flat 深度需固定數值。</li>
               <li>split 不支援正規表示式；空分隔符遇非 BMP 字元會明確失敗。</li>
               <li>動態型別、完整數值／UTF-16 語意仍有限制。</li>
               <li>Node.js、npm 套件及 HTTP Server API 尚未對接。</li>

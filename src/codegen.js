@@ -5,6 +5,7 @@
 import { parseJSDoc, mapToRustType } from './types.js';
 import { inferParameterType } from './inference.js';
 import { RUST_RUNTIME } from './runtime.js';
+import { maybeInner, missingType, ownedType, mergeTypes, collectionParts, flatDepth } from './data-types.js';
 import path from 'node:path';
 
 function writesIdentifier(node, name) {
@@ -12,7 +13,7 @@ function writesIdentifier(node, name) {
   const target = node.type === 'AssignmentExpression' ? node.left : node.type === 'UpdateExpression' ? node.argument : null;
   if (target && (target.name === name || target.object?.name === name)) return true;
   if (node.type === 'CallExpression' && node.callee.object?.name === name &&
-      ['push', 'pop', 'splice', 'sort', 'reverse'].includes(node.callee.property?.name)) return true;
+      ['push', 'pop', 'splice', 'sort', 'reverse', 'set', 'add', 'delete', 'clear'].includes(node.callee.property?.name)) return true;
   return Object.entries(node).some(([key, value]) => !key.endsWith('Comments') &&
     (Array.isArray(value) ? value.some(child => writesIdentifier(child, name)) : writesIdentifier(value, name)));
 }
@@ -49,7 +50,7 @@ export function doesMethodMutateThis(bodyNode) {
       node.callee.object.object.type === 'ThisExpression'
     ) {
       const method = node.callee.property.name;
-      if (['push', 'pop', 'reverse', 'sort', 'splice'].includes(method)) {
+      if (['push', 'pop', 'reverse', 'sort', 'splice', 'set', 'add', 'delete', 'clear'].includes(method)) {
         mutates = true;
         return;
       }
@@ -91,10 +92,11 @@ export class RustEmitter {
     this.returnTypes = new Map(options.sharedReturnTypes || []);
     this.currentReturnType = null;
     this.currentClass = null;
-    this.needRuntime = false;
+    this.needRuntime = Boolean(options.comparison);
     this.forUpdates = [];
     this.switchCounter = 0;
     this.breakTargets = [];
+    this.narrowed = new Map();
   }
 
   fail(node, message) {
@@ -106,8 +108,102 @@ export class RustEmitter {
   }
 
   withScope(bindings, fn) {
+    const previous = this.narrowed;
+    this.narrowed = new Map(previous);
+    for (const [name] of bindings) this.narrowed.delete(name);
     this.scopes.push(new Map(bindings));
-    try { return fn(); } finally { this.scopes.pop(); }
+    try { return fn(); } finally { this.scopes.pop(); this.narrowed = previous; }
+  }
+
+  inferCollection(node) {
+    const kind = node.callee.name;
+    const annotated = node.typeParameters?.params;
+    if (annotated) return `__js2rust::${kind}<${annotated.map(t => ownedType(this.mapTsType(t))).join(', ')}>`;
+    const types = kind === 'Map' ? [null, null] : [null];
+    const collect = values => values.forEach((v, i) => { const next = ownedType(this.inferExpressionType(v)); types[i] = mergeTypes(types[i], next); });
+    if (kind === 'Map') node.arguments[0]?.elements?.forEach(pair => collect(pair.elements || []));
+    else node.arguments[0]?.elements?.forEach(v => collect([v]));
+    let name;
+    const scan = n => {
+      if (!n || typeof n !== 'object') return;
+      if (n.type === 'VariableDeclarator' && n.init === node) name = n.id.name;
+      for (const [key, value] of Object.entries(n)) {
+        if (['loc', 'leadingComments', 'trailingComments'].includes(key)) continue;
+        if (Array.isArray(value)) value.forEach(scan); else if (value && typeof value === 'object') scan(value);
+      }
+    };
+    scan(this.rootAst?.program);
+    const find = n => {
+      if (!n || typeof n !== 'object') return;
+      if (name && n.type === 'CallExpression' && n.callee.object?.name === name && n.callee.property?.name === (kind === 'Map' ? 'set' : 'add')) collect(n.arguments);
+      for (const [key, value] of Object.entries(n)) {
+        if (['loc', 'leadingComments', 'trailingComments'].includes(key)) continue;
+        if (Array.isArray(value)) value.forEach(find); else if (value && typeof value === 'object') find(value);
+      }
+    };
+    find(this.rootAst?.program);
+    if (types.some(t => !t)) this.fail(node, `Empty ${kind} requires explicit type arguments or a typed ${kind === 'Map' ? 'set' : 'add'} call`);
+    return `__js2rust::${kind}<${types.join(', ')}>`;
+  }
+
+  guardBindings(test, truth) {
+    if (test.type === 'UnaryExpression' && test.operator === '!') return this.guardBindings(test.argument, !truth);
+    if (test.type === 'LogicalExpression' && (test.operator === '&&' && truth || test.operator === '||' && !truth)) {
+      const combined = [...this.guardBindings(test.left, truth), ...this.guardBindings(test.right, truth)];
+      // Checking both distinct missing values proves presence for general nullable unions.
+      const checks = [test.left, test.right].filter(n => n.type === 'BinaryExpression' && ['!==', '!='].includes(n.operator));
+      const missingChecks = new Set(checks.map(n => this.inferExpressionType(n.right)));
+      if (truth && checks.length === 2 && checks[0].left.type === 'Identifier' && checks[0].left.name === checks[1].left.name && missingChecks.has('null') && missingChecks.has('undefined')) {
+        const name = checks[0].left.name, inner = maybeInner(this.variableType(name));
+        if (inner) combined.push([name, inner]);
+      }
+      return combined;
+    }
+    if (test.type === 'Identifier' && truth && maybeInner(this.variableType(test.name))) return [[test.name, maybeInner(this.variableType(test.name))]];
+    if (test.type !== 'BinaryExpression') return [];
+    const positive = ['!=', '!=='].includes(test.operator) ? truth : ['==', '==='].includes(test.operator) ? !truth : false;
+    const id = test.left.type === 'Identifier' ? test.left : test.right.type === 'Identifier' ? test.right : null;
+    const other = id === test.left ? test.right : test.left;
+    if (!positive || !id || !missingType(this.inferExpressionType(other))) return [];
+    const inner = maybeInner(this.variableType(id.name));
+    if (!inner) return [];
+    if (test.operator.length === 2) return [[id.name, inner]];
+    let undefinedOnly = false, declarations = 0;
+    const scan = n => {
+      if (!n || typeof n !== 'object') return;
+      if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(n.type)) return;
+      if (n.type === 'VariableDeclarator' && n.id.name === id.name) {
+        declarations++;
+        const method = n.init?.callee?.property?.name, receiver = this.inferExpressionType(n.init?.callee?.object);
+        const value = method === 'get' ? collectionParts(receiver)?.parts[1] : this.elementType(receiver);
+        undefinedOnly = ['find', 'pop', 'get'].includes(method) && Boolean(value) && !maybeInner(value);
+      }
+      for (const [key, value] of Object.entries(n)) {
+        if (['loc', 'leadingComments', 'trailingComments'].includes(key)) continue;
+        if (Array.isArray(value)) value.forEach(scan); else if (value && typeof value === 'object') scan(value);
+      }
+    };
+    scan(this.currentFunction?.body);
+    const annotation = this.currentFunction?.params.find(p => (p.left || p).name === id.name)?.typeAnnotation?.typeAnnotation;
+    if (annotation?.type === 'TSUnionType' && !annotation.types.some(t => t.type === 'TSNullKeyword')) undefinedOnly = true;
+    if (declarations > 1 || writesIdentifier(this.currentFunction?.body, id.name)) undefinedOnly = false;
+    return undefinedOnly && this.inferExpressionType(other) === 'undefined' ? [[id.name, inner]] : [];
+  }
+
+  withNarrowing(test, truth, fn, body) {
+    const previous = this.narrowed;
+    this.narrowed = new Map(previous);
+    for (const [name, type] of this.guardBindings(test, truth)) {
+      if (!body || !writesIdentifier(body, name)) this.narrowed.set(name, type);
+    }
+    try { return fn(); } finally { this.narrowed = previous; }
+  }
+
+  emitCondition(node) {
+    if (node.type === 'LogicalExpression' && ['&&', '||'].includes(node.operator)) return `(${this.emitCondition(node.left)} ${node.operator} ${this.withNarrowing(node.left, node.operator === '&&', () => this.emitCondition(node.right), node.right)})`;
+    const type = this.inferExpressionType(node);
+    if (maybeInner(type) || ['i64', 'f64', 'String', '&str'].includes(type)) return `${this.helper('truthy')}(&(${this.emit(node)}))`;
+    return this.emit(node);
   }
 
   variableType(name) {
@@ -127,31 +223,35 @@ export class RustEmitter {
   inferExpressionType(node) {
     if (!node) return null;
     switch (node.type) {
-      case 'NumericLiteral': return Number.isInteger(node.value) ? this.defaultNumberType : 'f64';
+      case 'NumericLiteral': return Number.isSafeInteger(node.value) ? this.defaultNumberType : 'f64';
       case 'StringLiteral': return '&str';
       case 'TemplateLiteral': return 'String';
       case 'BooleanLiteral': return 'bool';
+      case 'NullLiteral': return 'null';
       case 'Identifier':
         if (['NaN', 'Infinity'].includes(node.name)) return 'f64';
+        if (node.name === 'undefined') return 'undefined';
+        if (this.narrowed.has(node.name)) return this.narrowed.get(node.name);
         return this.variableType(node.name);
       case 'ArrayExpression': {
-        const types = node.elements.map(e => this.inferExpressionType(e));
+        const types = node.elements.filter(e => !(e?.type === 'ArrayExpression' && !e.elements.length)).map(e => this.inferExpressionType(e));
         if (types.some(t => this.isString(t))) return 'Vec<String>';
-        return `Vec<${types.some(t => this.isFloat(t)) ? 'f64' : types[0] || this.defaultNumberType}>`;
+        return `Vec<${types.reduce((a, b) => mergeTypes(a, b) || a, null) || this.defaultNumberType}>`;
       }
-      case 'NewExpression': return node.callee.name === 'Promise' ? null : node.callee.name;
+      case 'NewExpression': return ['Map', 'Set'].includes(node.callee.name) ? this.inferCollection(node) : node.callee.name === 'Promise' ? null : node.callee.name;
       case 'UnaryExpression': return node.operator === '!' ? 'bool' : this.inferExpressionType(node.argument);
-      case 'LogicalExpression': return 'bool';
-      case 'ConditionalExpression': return this.inferExpressionType(node.consequent) || this.inferExpressionType(node.alternate);
+      case 'UpdateExpression': return this.inferExpressionType(node.argument);
+      case 'LogicalExpression': return node.operator === '??' ? mergeTypes(maybeInner(this.inferExpressionType(node.left)) || this.inferExpressionType(node.left), this.inferExpressionType(node.right)) : 'bool';
+      case 'ConditionalExpression': return mergeTypes(this.withNarrowing(node.test, true, () => this.inferExpressionType(node.consequent), node.consequent), this.withNarrowing(node.test, false, () => this.inferExpressionType(node.alternate), node.alternate));
       case 'BinaryExpression': {
         if (['==', '===', '!=', '!==', '<', '<=', '>', '>=', 'in', 'instanceof'].includes(node.operator)) return 'bool';
         const left = this.inferExpressionType(node.left), right = this.inferExpressionType(node.right);
         if (node.operator === '+' && (this.isString(left) || this.isString(right))) return 'String';
         if (node.operator === '/' || node.operator === '**' || this.isFloat(left) || this.isFloat(right)) return 'f64';
-        return left || right || this.defaultNumberType;
+        return maybeInner(left) || maybeInner(right) || left || right || this.defaultNumberType;
       }
       case 'MemberExpression': {
-        if (node.property.name === 'length') return 'i64';
+        if (['length', 'size'].includes(node.property.name)) return 'i64';
         const objectType = node.object.type === 'ThisExpression' ? this.currentClass : this.inferExpressionType(node.object);
         if (node.computed) return this.elementType(objectType);
         const struct = this.structs.get(objectType?.replace(/^&(?:mut )?/, ''));
@@ -163,12 +263,32 @@ export class RustEmitter {
         if (node.callee.type !== 'MemberExpression') return null;
         const method = node.callee.property.name;
         const objectType = this.inferExpressionType(node.callee.object);
+        const collection = collectionParts(objectType);
+        if (node.callee.object.name === 'Array' && method === 'from') {
+          const input = this.inferExpressionType(node.arguments[0]);
+          const parts = collectionParts(input);
+          return parts?.kind === 'Set' ? `Vec<${parts.parts[0]}>` : input;
+        }
+        if (collection) {
+          const [key, value] = collection.parts;
+          if (['has', 'delete'].includes(method)) return 'bool';
+          if (method === 'get' && collection.kind === 'Map') return maybeInner(value) ? value : `__js2rust::Maybe<${value}>`;
+          if (['set', 'add'].includes(method)) return objectType;
+          if (method === 'keys') return `Vec<${key}>`;
+          if (method === 'values') return `Vec<${value || key}>`;
+          return '()';
+        }
         const element = this.elementType(objectType) || this.defaultNumberType;
         if (node.callee.object.name === 'Math') return ['sqrt', 'pow'].includes(method) ? 'f64' : method === 'floor' ? 'i64' : this.inferExpressionType(node.arguments[0]);
         if (['includes', 'some', 'every', 'startsWith', 'endsWith'].includes(method)) return 'bool';
         if (method === 'split') return 'Vec<String>';
         if (['join', 'trim', 'toLowerCase', 'toUpperCase'].includes(method)) return 'String';
         if (['slice', 'splice', 'filter', 'reverse', 'sort', 'concat'].includes(method)) return `Vec<${element}>`;
+        if (method === 'flat') {
+          let result = element, depth = flatDepth(node, this.fail.bind(this));
+          while (depth > 0 && this.elementType(result)) { result = this.elementType(result); depth--; }
+          return `Vec<${result}>`;
+        }
         if (method === 'map') {
           const callback = node.arguments[0];
           const result = this.inferCallbackResult(callback, [element, 'i64']);
@@ -178,7 +298,7 @@ export class RustEmitter {
           const initial = node.arguments.length > 1 ? this.inferExpressionType(node.arguments[1]) : element;
           return this.inferCallbackResult(node.arguments[0], [initial, element, 'i64']) || initial;
         }
-        if (['pop', 'find'].includes(method)) return `Option<${element}>`;
+        if (['pop', 'find'].includes(method)) return maybeInner(element) ? element : `__js2rust::Maybe<${element}>`;
         if (['push', 'indexOf'].includes(method)) return 'i64';
         return null;
       }
@@ -222,14 +342,25 @@ export class RustEmitter {
   }
 
   emitExpected(node, type) {
+    const inner = maybeInner(type);
+    if (inner) {
+      this.needRuntime = true;
+      if (node.type === 'NullLiteral') return '__js2rust::Maybe::Null';
+      if (node.type === 'Identifier' && node.name === 'undefined') return '__js2rust::Maybe::Undefined';
+      if (!maybeInner(this.inferExpressionType(node))) return `__js2rust::Maybe::Value(${this.emitExpected(node, inner)})`;
+    }
     if (node?.type === 'ArrayExpression' && type?.startsWith('Vec<')) {
       return `vec![${node.elements.map(element => this.emitExpected(element, this.elementType(type))).join(', ')}]`;
     }
     const code = this.emit(node);
     const actual = this.inferExpressionType(node);
+    if (type && maybeInner(actual) && !maybeInner(type)) this.fail(node, 'Nullable values require a guard or ?? before conversion');
+    if (type && missingType(actual) && !maybeInner(type) && type !== actual) this.fail(node, 'Missing values require a nullable type annotation');
     if (type === 'String' && this.isString(actual) && actual !== 'String') return `(${code}).to_string()`;
+    if (type === 'String' && actual === 'String' && node.type === 'Identifier') return `(${code}).clone()`;
     if (this.isFloat(type) && actual !== type) return `((${code}) as ${type})`;
     if (type?.includes('str') && actual === 'String') return `&(${code})`;
+    if (maybeInner(type) && node.type === 'Identifier') return `(${code}).clone()`;
     return code;
   }
 
@@ -286,7 +417,15 @@ export class RustEmitter {
       case 'TSVoidKeyword':
         return '';
       case 'TSTypeReference':
+        if (['Map', 'Set'].includes(tsType.typeName.name)) return `${this.helper(tsType.typeName.name)}<${tsType.typeParameters.params.map(t => ownedType(this.mapTsType(t))).join(', ')}>`;
         return tsType.typeName.name;
+      case 'TSUnionType': {
+        const concrete = tsType.types.filter(t => !['TSNullKeyword', 'TSUndefinedKeyword'].includes(t.type));
+        if (concrete.length !== 1) this.fail(tsType, 'Nullable unions require exactly one concrete type');
+        return `${this.helper('Maybe')}<${ownedType(this.mapTsType(concrete[0]))}>`;
+      }
+      case 'TSNullKeyword': return 'null';
+      case 'TSUndefinedKeyword': return 'undefined';
       case 'TSArrayType':
         return `Vec<${this.mapTsType(tsType.elementType)}>`;
       default:
@@ -307,10 +446,10 @@ export class RustEmitter {
         const expressionType = this.inferExpressionType(arg);
         if (expressionType) {
           const next = this.isString(expressionType) ? 'String' : expressionType;
-          if (inferredType && inferredType !== next && !(['i64', 'f64'].includes(inferredType) && ['i64', 'f64'].includes(next))) {
+          if (inferredType && !mergeTypes(inferredType, next)) {
             this.fail(node, `Conflicting return types: ${inferredType} and ${next}`);
           }
-          inferredType = inferredType === 'f64' || next === 'f64' ? 'f64' : next;
+          inferredType = mergeTypes(inferredType, next);
         } else if (arg.type === 'BooleanLiteral') {
           inferredType = 'bool';
         } else if (
@@ -534,7 +673,7 @@ export class RustEmitter {
       if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
         const method = node.callee.property.name;
         if (
-          ['push', 'pop', 'reverse', 'sort', 'splice'].includes(method) ||
+          ['push', 'pop', 'reverse', 'sort', 'splice', 'set', 'add', 'delete', 'clear'].includes(method) ||
           (this.classMutatingMethods && this.classMutatingMethods.has(method))
         ) {
           if (node.callee.object.type === 'Identifier') {
@@ -664,10 +803,14 @@ export class RustEmitter {
         const name = stmt.id?.name || 'default_export';
         const doc = parseJSDoc(stmt.leadingComments);
         const params = this.signatures.get(name) || [];
+        const previousFunction = this.currentFunction;
+        this.currentFunction = stmt;
         const result = doc.returns ? mapToRustType(doc.returns, true)
           : stmt.returnType ? this.mapTsType(stmt.returnType.typeAnnotation)
           : this.withScope(params.map(p => [p.name, p.type]), () => this.inferBlockReturnType(stmt.body));
+        this.currentFunction = previousFunction;
         this.returnTypes.set(name, result || '()');
+        if (result?.includes('__js2rust::') || params.some(p => p.type.includes('__js2rust::'))) this.needRuntime = true;
       }
     }
   }
@@ -709,7 +852,7 @@ export class RustEmitter {
       // 3. Mutating methods: arr.push(), arr.pop()
       if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
         const method = node.callee.property.name;
-        if (['push', 'pop', 'reverse', 'sort', 'splice'].includes(method)) {
+        if (['push', 'pop', 'reverse', 'sort', 'splice', 'set', 'add', 'delete', 'clear'].includes(method)) {
           const obj = node.callee.object;
           if (obj.type === 'Identifier' && paramNames.has(obj.name)) {
             mutated.add(obj.name);
@@ -742,6 +885,11 @@ export class RustEmitter {
   }
 
   emit(node) {
+    const code = this.emitNode(node);
+    return this.options.sourceMapSession?.wrap(code, node, this.options.filename) || code;
+  }
+
+  emitNode(node) {
     if (!node) return '';
 
     switch (node.type) {
@@ -811,16 +959,21 @@ export class RustEmitter {
 
       case 'UnaryExpression':
         if (!['!', '-', '+', '~'].includes(node.operator)) this.fail(node, `Unsupported unary operator: ${node.operator}`);
+        if (node.operator === '!' && maybeInner(this.inferExpressionType(node.argument))) return `(!${this.emitCondition(node.argument)})`;
         return node.operator === '+' ? `(${this.emit(node.argument)})` : `(${node.operator === '~' ? '!' : node.operator}${this.emit(node.argument)})`;
 
       case 'UpdateExpression':
         return this.emitUpdateExpression(node);
 
       case 'AssignmentExpression':
+        if (node.left.type === 'Identifier' && maybeInner(this.variableType(node.left.name))) {
+          this.narrowed.delete(node.left.name);
+          return `${this.formatIdentifier(node.left.name)} ${node.operator} ${this.emitExpected(node.right, this.variableType(node.left.name))}`;
+        }
         return `${this.emit(node.left)} ${node.operator} ${this.emitExpected(node.right, node.operator === '+=' && this.isString(this.inferExpressionType(node.left)) ? '&str' : this.inferExpressionType(node.left))}`;
 
       case 'ConditionalExpression':
-        return `if ${this.emit(node.test)} { ${this.emit(node.consequent)} } else { ${this.emit(node.alternate)} }`;
+        return this.emitConditionalExpression(node);
 
       case 'CallExpression':
         return this.emitCallExpression(node);
@@ -845,18 +998,21 @@ export class RustEmitter {
         return this.emitTemplateLiteral(node);
 
       case 'NumericLiteral':
-        return String(node.value);
+        return this.inferExpressionType(node) === 'f64' && !/[.eE]/.test(String(node.value)) ? `${node.value}.0` : String(node.value);
 
       case 'StringLiteral':
         return this.rustString(node.value);
 
       case 'BooleanLiteral':
         return node.value ? 'true' : 'false';
+      case 'NullLiteral': return `${this.helper('Maybe')}::<i64>::Null`;
 
       case 'Identifier':
         if (node.name === 'NaN') return 'f64::NAN';
         if (node.name === 'Infinity') return 'f64::INFINITY';
-        if (node.name === 'undefined') return 'None';
+        if (node.name === 'undefined') return `${this.helper('Maybe')}::<i64>::Undefined`;
+        if (this.narrowed.has(node.name)) return `${this.formatIdentifier(node.name)}.value().clone()`;
+        if (node.name === 'main' && this.options.comparison) return '__js2rust_user_main';
         return this.formatIdentifier(node.name);
 
       case 'ThisExpression':
@@ -1172,6 +1328,19 @@ export class RustEmitter {
   }
 
   emitNewExpression(node) {
+    if (['Map', 'Set'].includes(node.callee.name)) {
+      const type = this.inferExpressionType(node), { kind, parts } = collectionParts(type);
+      this.needRuntime = true;
+      if (!['i64', 'f64', 'String', 'bool'].includes(parts[0])) this.fail(node, `${kind} keys/elements currently require number, string, or boolean values`);
+      if (kind === 'Map' && !['i64', 'f64', 'String', 'bool'].includes(maybeInner(parts[1]) || parts[1])) this.fail(node, 'Map values currently require homogeneous primitive or nullable primitive values');
+      const input = node.arguments[0];
+      if (kind === 'Map') {
+        if (input && (input.type !== 'ArrayExpression' || input.elements.some(p => p?.type !== 'ArrayExpression' || p.elements.length !== 2))) this.fail(node, 'Map constructor requires an array of [key, value] pairs');
+        const entries = input?.elements.map(p => `(${this.emitExpected(p.elements[0], parts[0])}, ${this.emitExpected(p.elements[1], parts[1])})`).join(', ') || '';
+        return `${this.helper('Map')}::new(vec![${entries}])`;
+      }
+      return `${this.helper('Set')}::new(${input ? this.emitExpected(input, `Vec<${parts[0]}>`) : 'vec![]'})`;
+    }
     if (node.callee && node.callee.name === 'Promise') {
       return this.emitPromise(node);
     }
@@ -1308,7 +1477,7 @@ export class RustEmitter {
   emitFunctionDeclaration(node) {
     const fnName = node.id ? node.id.name : 'default_export';
     const jsdoc = parseJSDoc(node.leadingComments);
-    const isMain = fnName === 'main';
+    const isMain = fnName === 'main' && !this.options.comparison;
     const hasPromiseReturn = this.hasReturnPromise(node.body);
     const isAsync = Boolean(node.async) || hasPromiseReturn;
 
@@ -1327,7 +1496,7 @@ export class RustEmitter {
       const inferred = this.returnTypes.get(fnName) || this.inferBlockReturnType(node.body);
       if (inferred && inferred !== '()') {
         returnClause = ` -> ${inferred}`;
-      } else if (!hasPromiseReturn) {
+      } else if (!hasPromiseReturn && !inferred) {
         returnClause = ` -> ${this.defaultNumberType}`;
       }
     }
@@ -1340,8 +1509,11 @@ export class RustEmitter {
     const visibility = isMain ? '' : 'pub ';
     const asyncPrefix = isAsync ? 'async ' : '';
     const lifetimeClause = jsdoc.lifetime ? `<${jsdoc.lifetime}>` : '';
-    const header = `${this.indent()}${tokioAttribute}${visibility}${asyncPrefix}fn ${this.formatIdentifier(fnName)}${lifetimeClause}(${params})${returnClause} `;
+    const emittedName = fnName === 'main' && this.options.comparison ? '__js2rust_user_main' : fnName;
+    const header = `${this.indent()}${tokioAttribute}${visibility}${asyncPrefix}fn ${this.formatIdentifier(emittedName)}${lifetimeClause}(${params})${returnClause} `;
     const previousReturn = this.currentReturnType;
+    const previousFunction = this.currentFunction;
+    this.currentFunction = node;
     this.currentReturnType = returnClause.replace(/^ -> /, '') || null;
     let body;
     try {
@@ -1349,7 +1521,7 @@ export class RustEmitter {
         this.registerLocals(node.body);
         return this.emit(node.body);
       });
-    } finally { this.currentReturnType = previousReturn; }
+    } finally { this.currentReturnType = previousReturn; this.currentFunction = previousFunction; }
 
     return header + body;
   }
@@ -1380,9 +1552,16 @@ export class RustEmitter {
   emitBlockStatement(node) {
     if (!node.body || node.body.length === 0) return '{\n}\n';
 
-    const statements = this.withIndent(() => {
-      return node.body.map((stmt) => this.emit(stmt)).join('\n');
-    });
+    const previous = this.narrowed;
+    this.narrowed = new Map(previous);
+    const returns = n => n?.type === 'ReturnStatement' || n?.type === 'BlockStatement' && returns(n.body.at(-1)) || n?.type === 'IfStatement' && returns(n.consequent) && returns(n.alternate);
+    let statements;
+    try { statements = this.withIndent(() => node.body.map(stmt => {
+      const code = this.emit(stmt);
+      if (stmt.type === 'IfStatement' && returns(stmt.consequent) && !stmt.alternate) for (const [name, type] of this.guardBindings(stmt.test, false)) this.narrowed.set(name, type);
+      return code;
+    }).join('\n')); }
+    finally { this.narrowed = previous; }
 
     return `{\n${statements}\n${this.indent()}}`;
   }
@@ -1407,28 +1586,32 @@ export class RustEmitter {
       const annotated = decl.id.typeAnnotation ? this.mapTsType(decl.id.typeAnnotation.typeAnnotation) : null;
       const inferredType = annotated || (emptyArray ? `Vec<${this.inferEmptyElement(decl.id.name) || this.defaultNumberType}>` : this.inferExpressionType(decl.init));
       if (decl.id.name) this.scopes.at(-1).set(decl.id.name, inferredType);
-      const initVal = decl.init ? ` = ${annotated ? this.emitExpected(decl.init, annotated) : this.emit(decl.init)}` : '';
+      const initVal = decl.init ? ` = ${annotated || maybeInner(inferredType) ? this.emitExpected(decl.init, inferredType) : this.emit(decl.init)}${collectionParts(inferredType) && ['set', 'add'].includes(decl.init.callee?.property?.name) ? '.clone()' : ''}` : '';
       // Empty arrays used for thread handles must remain inferable from later pushes.
-      return `${this.indent()}${mutPrefix}${varName}${(annotated || inferredType?.startsWith('Vec<')) && !this.isHandleArray(decl.id.name) ? `: ${inferredType}` : ''}${initVal};`;
+      return `${this.indent()}${mutPrefix}${varName}${(annotated || inferredType?.startsWith('Vec<') || maybeInner(inferredType) || collectionParts(inferredType)) && !this.isHandleArray(decl.id.name) ? `: ${inferredType}` : ''}${initVal};`;
     });
     return decls.join('\n');
   }
 
   emitIfStatement(node) {
-    const condition = this.emit(node.test);
-    const consequent = this.emit(node.consequent);
+    const condition = this.emitCondition(node.test);
+    const consequent = this.withNarrowing(node.test, true, () => this.emit(node.consequent), node.consequent);
 
     let result = `${this.indent()}if ${condition} ${consequent}`;
     if (node.alternate) {
       if (node.alternate.type === 'IfStatement') {
-        const elseIfStr = this.emit(node.alternate).trimStart();
+        const elseIfStr = this.withNarrowing(node.test, false, () => this.emit(node.alternate), node.alternate).trimStart();
         result += ` else ${elseIfStr}`;
       } else {
-        const alternateStr = this.emit(node.alternate);
+        const alternateStr = this.withNarrowing(node.test, false, () => this.emit(node.alternate), node.alternate);
         result += ` else ${alternateStr}`;
       }
     }
     return result;
+  }
+  emitConditionalExpression(node) {
+    const type = this.inferExpressionType(node);
+    return `if ${this.emitCondition(node.test)} { ${this.withNarrowing(node.test, true, () => this.emitExpected(node.consequent, type), node.consequent)} } else { ${this.withNarrowing(node.test, false, () => this.emitExpected(node.alternate, type), node.alternate)} }`;
   }
 
   emitSwitchStatement(node) {
@@ -1543,6 +1726,7 @@ export class RustEmitter {
   }
 
   emitForOfStatement(node) {
+    if (collectionParts(this.inferExpressionType(node.right))) this.fail(node.right, 'Collection iteration currently requires Array.from(set) or Array.from(map.keys()/values())');
     const item = node.left.declarations ? node.left.declarations[0].id.name : node.left.name;
     const list = this.emit(node.right);
     this.forUpdates.push(null);
@@ -1557,6 +1741,34 @@ export class RustEmitter {
   }
 
   emitBinaryExpression(node) {
+    const a = this.inferExpressionType(node.left), b = this.inferExpressionType(node.right);
+    if (node.operator === '??') {
+      const inner = maybeInner(a);
+      if (missingType(a)) return this.emit(node.right);
+      if (!inner) return this.emit(node.left);
+      const result = this.inferExpressionType(node);
+      const value = this.isFloat(result) && !this.isFloat(inner) ? `((*__value) as ${result})` : '__value.clone()';
+      return `match &(${this.emit(node.left)}) { ${this.helper('Maybe')}::Value(__value) => ${maybeInner(result) ? '__js2rust::Maybe::Value(__value.clone())' : value}, _ => ${this.emitExpected(node.right, result)} }`;
+    }
+    if (missingType(a) || missingType(b)) {
+      if (!['==', '===', '!=', '!=='].includes(node.operator)) this.fail(node, 'Missing values require a guard or ?? before use');
+      const strict = node.operator.length === 3, negative = node.operator.startsWith('!');
+      if (missingType(a) && missingType(b)) return String(negative ? strict && a !== b : !strict || a === b);
+      const missing = missingType(a) ? a : b, other = missingType(a) ? node.right : node.left;
+      const otherType = missingType(a) ? b : a;
+      if (!maybeInner(otherType)) return String(negative);
+      return `(${negative ? '!' : ''}(${this.emit(other)}).${strict ? missing === 'null' ? 'is_null' : 'is_undefined' : 'is_missing'}())`;
+    }
+    if (maybeInner(a) || maybeInner(b)) {
+      if (!['==', '===', '!=', '!=='].includes(node.operator)) this.fail(node, 'Nullable values require a guard or ?? before arithmetic or ordering');
+      const type = mergeTypes(a, b);
+      return `(${this.emitExpected(node.left, type)} ${node.operator.startsWith('!') ? '!=' : '=='} ${this.emitExpected(node.right, type)})`;
+    }
+    if (this.elementType(a) || this.elementType(b) || collectionParts(a) || collectionParts(b)) this.fail(node, 'Reference identity and implicit array/collection conversions are unsupported');
+    if (node.type === 'LogicalExpression' && ['&&', '||'].includes(node.operator)) {
+      if (![a, b].every(t => t === 'bool')) this.fail(node, 'Logical operators currently require boolean operands');
+      return `(${this.emitCondition(node.left)} ${node.operator} ${this.withNarrowing(node.left, node.operator === '&&', () => this.emitCondition(node.right), node.right)})`;
+    }
     let op = node.operator;
     if (op === '===') op = '==';
     if (op === '!==') op = '!=';
@@ -1569,6 +1781,7 @@ export class RustEmitter {
     if (op === '+' && (this.isString(leftType) || this.isString(rightType))) {
       return `format!("{}{}", ${this.emit(node.left)}, ${this.emit(node.right)})`;
     }
+    if (['<', '<=', '>', '>='].includes(op) && this.isString(leftType) && this.isString(rightType)) return `(${this.helper('utf16_cmp')}(&(${this.emit(node.left)}), &(${this.emit(node.right)})) ${op} std::cmp::Ordering::Equal)`;
     if (op === '**') return `((${this.emit(node.left)}) as f64).powf((${this.emit(node.right)}) as f64)`;
     const float = op === '/' || this.isFloat(leftType) || this.isFloat(rightType);
     const left = float ? this.emitExpected(node.left, 'f64') : this.emit(node.left);
@@ -1577,28 +1790,33 @@ export class RustEmitter {
   }
 
   emitUpdateExpression(node) {
+    if (node.argument.type === 'Identifier' && maybeInner(this.variableType(node.argument.name))) this.fail(node, 'Nullable increment requires an explicit guarded assignment');
     const arg = this.emit(node.argument);
     const one = this.emitExpected({ type: 'NumericLiteral', value: 1 }, this.inferExpressionType(node.argument));
-    if (node.operator === '++') return `${arg} += ${one}`;
-    if (node.operator === '--') return `${arg} -= ${one}`;
+    if (['++', '--'].includes(node.operator)) return `{ let __target = &mut (${arg}); let __old = *__target; *__target ${node.operator === '++' ? '+=' : '-='} ${one}; ${node.prefix ? '*__target' : '__old'} }`;
     return `${arg} ${node.operator}`;
   }
 
   emitCallExpression(node) {
+    if (['sort', 'reverse'].includes(node.callee.object?.callee?.property?.name) && ['sort', 'reverse', 'push', 'pop', 'splice'].includes(node.callee.property?.name)) this.fail(node, 'Mutating a sort/reverse return value requires separate statements on the original array');
     // 1. console.log(...) -> println!(...)
     if (
       node.callee.type === 'MemberExpression' &&
       node.callee.object.name === 'console' &&
       node.callee.property.name === 'log'
     ) {
+      if (this.options.comparison) {
+        const args = node.arguments.map(a => `${this.helper('json')}(&(${this.emit(a)}))`);
+        return `println!("__JS2RUST_LOG__[{}]"${args.length ? `, ${args.join(', ')}` : ''})`.replace('[{}]', `[${args.map(() => '{}').join(',')}]`);
+      }
       if (node.arguments.length === 0) return 'println!()';
       const placeholders = node.arguments.map(a => {
         const t = this.inferExpressionType(a);
-        return t && !this.elementType(t) && (!this.structs.has(t) || t.startsWith('Option<')) ? '{}' : '{:?}';
+        return t && !this.elementType(t) && !collectionParts(t) && (!this.structs.has(t) || maybeInner(t)) ? '{}' : '{:?}';
       }).join(' ');
       const args = node.arguments.map((a) => {
         const code = this.emit(a), t = this.inferExpressionType(a);
-        return t?.startsWith('Option<') ? `match &(${code}) { Some(v) => format!("{}", v), None => "undefined".to_string() }` : code;
+        return maybeInner(t) && this.elementType(maybeInner(t)) ? `match &(${code}) { __js2rust::Maybe::Value(v) => format!("{:?}", v), __js2rust::Maybe::Null => "null".to_string(), __js2rust::Maybe::Undefined => "undefined".to_string() }` : code;
       }).join(', ');
       return `println!("${placeholders}", ${args})`;
     }
@@ -1638,6 +1856,21 @@ export class RustEmitter {
       const f64 = n => n ? this.emitExpected(n, 'f64') : '0.0';
       const optionNumber = n => n ? `Some(${f64(n)})` : 'None';
       const isText = this.isString(objectType);
+      if (maybeInner(objectType)) this.fail(node.callee.object, 'Nullable receiver requires a guard or ?? before calling a method');
+      if (node.callee.object.name === 'Array' && method === 'from') {
+        const input = this.inferExpressionType(node.arguments[0]);
+        if (node.arguments.length !== 1 || !this.elementType(input) && collectionParts(input)?.kind !== 'Set') this.fail(node, 'Array.from supports an array, Set, or Map keys/values without a mapping callback');
+        return collectionParts(input) ? `(${this.emit(node.arguments[0])}).values()` : `(${this.emit(node.arguments[0])}).clone()`;
+      }
+      const collection = collectionParts(objectType);
+      if (collection) {
+        const { kind, parts } = collection;
+        const count = { set: 2, add: 1, get: 1, has: 1, delete: 1, clear: 0, keys: 0, values: 0 }[method];
+        if (count === undefined || kind === 'Map' && method === 'add' || kind === 'Set' && ['set', 'get'].includes(method)) this.fail(node, `Unsupported ${kind} method: ${method}`);
+        if (node.arguments.length !== count) this.fail(node, `${kind}.${method} requires ${count} arguments`);
+        const args = node.arguments.map((arg, i) => `${['get', 'has', 'delete'].includes(method) ? '&' : ''}(${this.emitExpected(arg, parts[i] || parts[0])})`).join(', ');
+        return `(${obj}).${method}(${args})${method === 'get' && maybeInner(parts[1]) ? '.flatten()' : ''}`;
+      }
 
       if (method === 'split') {
         if (!isText) this.fail(node, 'split requires a string receiver');
@@ -1656,7 +1889,29 @@ export class RustEmitter {
         const borrow = objectType?.startsWith('&mut') ? `&mut *${obj}` : `&mut ${obj}`;
         return `{ let __items = vec![${items}]; let __values = ${borrow}; __values.extend(__items); __values.len() as i64 }`;
       }
-      if (method === 'pop') return `${obj}.pop()`;
+      if (method === 'pop') return `${this.helper('Maybe')}::from_option(${obj}.pop())${maybeInner(element) ? '.flatten()' : ''}`;
+      if (method === 'reverse' && this.elementType(objectType)) return `{ let __values = &mut ${obj}; __values.reverse(); __values.clone() }`;
+      if (method === 'sort' && this.elementType(objectType)) {
+        if (!['i64', 'f64', 'String', 'bool'].includes(element)) this.fail(node, 'sort currently supports homogeneous primitive elements');
+        if (!node.arguments.length || node.arguments[0].name === 'undefined') return `{ let __values = &mut ${obj}; ${this.helper('sort_default')}(__values); __values.clone() }`;
+        const callback = node.arguments[0];
+        if (!['ArrowFunctionExpression', 'FunctionExpression'].includes(callback.type) || callback.params.length > 2 || callback.params.some(p => p.type !== 'Identifier')) this.fail(callback, 'sort requires an inline comparator with up to two identifier parameters');
+        if (node.callee.object.name && writesIdentifier(callback.body, node.callee.object.name)) this.fail(callback, 'Mutating the source array inside its comparator is unsupported');
+        const result = this.inferCallbackResult(callback, [element, element]);
+        if (!['i64', 'f64'].includes(result)) this.fail(callback, 'sort comparator must return a number');
+        const previous = this.currentReturnType;
+        this.currentReturnType = result;
+        let body;
+        try { body = this.withScope(callback.params.map(p => [p.name, element]), () => callback.body.type === 'BlockStatement' ? this.emit(callback.body) : `{ ${this.emit(callback.body)} }`); }
+        finally { this.currentReturnType = previous; }
+        const declarations = callback.params.map((p, i) => `let ${this.formatIdentifier(p.name)} = ${i ? '__b' : '__a'}.clone();`).join(' ');
+        return `{ let __values = &mut ${obj}; __values.sort_by(|__a, __b| { let __order = (|| -> ${result} { ${declarations} ${body} })(); if __order < ${result === 'f64' ? '0.0' : '0'} { std::cmp::Ordering::Less } else if __order > ${result === 'f64' ? '0.0' : '0'} { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal } }); __values.clone() }`;
+      }
+      if (method === 'flat' && this.elementType(objectType)) {
+        let depth = flatDepth(node, this.fail.bind(this)), current = objectType, result = `(${obj}).clone()`;
+        while (depth > 0 && this.elementType(this.elementType(current))) { result = `(${result}).into_iter().flatten().collect::<Vec<_>>()`; current = `Vec<${this.elementType(this.elementType(current))}>`; depth--; }
+        return result;
+      }
       if (method === 'slice') {
         if (isText) this.fail(node, 'String.slice is not supported; array slice requires an array');
         return `${this.helper('slice')}(&${obj}, ${f64(node.arguments[0])}, ${optionNumber(node.arguments[1])})`;
@@ -1707,7 +1962,7 @@ export class RustEmitter {
         if (indexed && method === 'filter') result += '.map(|(_, value)| value)';
         if (indexed && method === 'find') result += '.map(|(_, value)| value)';
         if (method === 'map' || method === 'filter') result += '.collect::<Vec<_>>()';
-        return result;
+        return method === 'find' ? `${this.helper('Maybe')}::from_option(${result})${maybeInner(element) ? '.flatten()' : ''}` : result;
       }
       if (this.elementType(objectType) && ['sort', 'reverse', 'concat', 'flat', 'flatMap'].includes(method)) {
         this.fail(node, `Unsupported array method: ${method}`);
@@ -1783,7 +2038,7 @@ export class RustEmitter {
       for (let i = supplied.length; i < expectedParamInfos.length; i++) {
         const fallback = expectedParamInfos[i].defaultValue;
         if (!fallback) this.fail(node, `Missing required argument ${expectedParamInfos[i].name} for ${fnName}`);
-        if (!['NumericLiteral', 'StringLiteral', 'BooleanLiteral', 'ArrayExpression'].includes(fallback.type)) this.fail(fallback, 'Only literal default parameters are currently supported');
+        if (!['NumericLiteral', 'StringLiteral', 'BooleanLiteral', 'NullLiteral', 'ArrayExpression'].includes(fallback.type) && !(fallback.type === 'Identifier' && fallback.name === 'undefined')) this.fail(fallback, 'Only literal default parameters are currently supported');
         supplied.push(fallback);
       }
     }
@@ -1796,7 +2051,7 @@ export class RustEmitter {
           if (!code.startsWith('&mut ')) {
             code = `&mut ${code}`;
           }
-        } else if (target.isStruct || target.type.startsWith('&[')) {
+        } else if (target.isStruct || target.type.startsWith('&[') || collectionParts(target.type) && target.type.startsWith('&')) {
           if (!code.startsWith('&')) {
             code = `&${code}`;
           }
@@ -1809,6 +2064,9 @@ export class RustEmitter {
   }
 
   emitMemberExpression(node) {
+    const type = this.inferExpressionType(node.object);
+    if (maybeInner(type)) this.fail(node.object, 'Nullable receiver requires a guard or ?? before accessing a property');
+    if (!node.computed && node.property.name === 'size' && collectionParts(type)) return `(${this.emit(node.object)}).size()`;
     // Enum access: Direction.North -> Direction::North
     if (
       !node.computed &&
