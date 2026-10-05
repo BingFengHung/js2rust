@@ -56,7 +56,11 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      height: 56px;
+      min-height: 56px;
+      height: auto;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+      gap: 10px;
       z-index: 10;
     }
 
@@ -66,6 +70,7 @@
       gap: 10px;
       font-size: 1.15rem;
       font-weight: 700;
+      white-space: nowrap;
     }
 
     .hamburger-btn {
@@ -112,6 +117,10 @@
       display: flex;
       align-items: center;
       gap: 12px;
+      flex: 1 1 800px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      min-width: 0;
     }
 
     select {
@@ -136,6 +145,8 @@
       border: none;
       cursor: pointer;
       transition: all 0.15s ease;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .btn-run {
@@ -188,6 +199,7 @@
     main.sidebar-collapsed aside.sidebar {
       opacity: 0;
       pointer-events: none;
+      visibility: hidden;
       border-right: none;
     }
 
@@ -623,6 +635,7 @@
     .modal-overlay.show {
       opacity: 1;
       pointer-events: auto;
+      visibility: visible;
     }
 
     .modal-card {
@@ -710,6 +723,19 @@
     .js-diagnostic-error { text-decoration: underline wavy #f85149; background: #f8514918; }
     .js-diagnostic-warning { text-decoration: underline wavy #d29922; }
     button:disabled { opacity: .45; cursor: not-allowed; }
+    .feature-panel { width: min(900px, 94vw); max-height: 86vh; overflow: auto; padding: 24px; background: var(--bg-panel, #161b22); border: 1px solid #30363d; border-radius: 14px; color: #c9d1d9; }
+    .feature-panel h2 { margin-top: 0; font-size: 1.25rem; }
+    .feature-panel label { display: block; margin: 12px 0 6px; }
+    .feature-panel input, .feature-panel textarea, .feature-panel select { width: 100%; box-sizing: border-box; padding: 10px; color: #c9d1d9; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; }
+    .feature-panel textarea { min-height: 100px; font-family: monospace; }
+    .feature-actions { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+    .feature-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #0d1117; border-radius: 6px; }
+    .feature-panel table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.85rem; }
+    .feature-panel td, .feature-panel th { padding: 10px; border-bottom: 1px solid #30363d; vertical-align: top; text-align: left; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .history-entry { display: block; width: 100%; text-align: left; margin-bottom: 8px; }
+    #saveStatus { font-size: 0.75rem; color: #8b949e; }
+    .actions > select { max-width: 100%; }
+    @media (max-width: 640px) { header { padding: 8px; } .actions { justify-content: flex-start; gap: 6px; } .actions > label { display: none; } }
   </style>
 </head>
 <body>
@@ -734,6 +760,9 @@
         <option value="" disabled selected>📂 載入開發維度範本專案...</option>
 
         <optgroup label="🧮 1. 基礎語言與演算法 (Core Language)">
+          <option value="dim_data">資料方法：sort / reverse / flat / Map / Set</option>
+          <option value="dim_nullable">缺值與型別縮小：null / undefined / ??</option>
+          <option value="dim_comparison">執行對照：多組輸入與回傳值</option>
           <option value="dim_basic">1-1. 基礎運算與控制流 (If/Else, While, Loop, Primitives)</option>
           <option value="dim_vectors">1-2. 向量與動態陣列 (Vec, push, pop, slice, index)</option>
           <option value="dim_methods">陣列與字串方法：map / reduce / split / splice</option>
@@ -769,6 +798,10 @@
       <button id="importBtn" class="btn btn-secondary" title="匯入本機專案資料夾或備份檔">📂 匯入專案</button>
       <button id="exportBtn" class="btn btn-secondary" title="匯出並下載當前專案備份檔">💾 匯出專案</button>
       <button id="copyBtn" class="btn btn-secondary">📋 複製 Rust</button>
+      <button id="historyBtn" class="btn btn-secondary">版本歷史</button>
+      <button id="rustDiagnosticsBtn" class="btn btn-secondary">Rust 錯誤定位</button>
+      <button id="compareBtn" class="btn btn-secondary" disabled>JS / Rust 對照</button>
+      <span id="saveStatus" role="status">自動儲存啟用</span>
 
       <button id="runBtn" class="btn btn-run">
         <span id="runIcon">▶</span>
@@ -867,7 +900,7 @@
           <span class="icon">📁</span>
           <div>
             <span>選擇本機專案資料夾</span>
-            <small>直接讀取你電腦上的專案資料夾結構與 .js 檔案</small>
+            <small>直接讀取專案資料夾結構與 .js / .ts / .mjs 檔案</small>
           </div>
         </button>
         <button id="optJsonBtn" class="modal-opt-btn">
@@ -882,9 +915,93 @@
     </div>
   </div>
 
+  <div id="historyModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+    <div class="feature-panel"><h2 id="historyTitle">專案版本歷史</h2>
+      <p>自動儲存在此瀏覽器，保留最多 20 份快照。切換範本、匯入及還原前也會留下快照。</p>
+      <label for="snapshotName">快照名稱</label><input id="snapshotName" placeholder="例如：排序功能完成" maxlength="80">
+      <div class="feature-actions"><button id="snapshotSave" class="btn btn-run">儲存快照</button><button id="historyClose" class="btn btn-secondary">關閉</button></div>
+      <div id="snapshotList"></div><div id="snapshotDiff"></div>
+    </div>
+  </div>
+  <div id="compareModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="compareTitle">
+    <div class="feature-panel"><h2 id="compareTitle">比較 JavaScript 與 Rust 的結果</h2>
+      <p>JavaScript 在獨立 Worker 執行；按下「開始對照」會將 Rust 程式碼傳到 <strong>play.rust-lang.org</strong> 編譯與執行。支援同步函式、基本資料、陣列及 Map / Set。</p>
+      <label for="compareEntryFile">入口檔案</label><select id="compareEntryFile"></select>
+      <label for="compareEntry">函式名稱</label><input id="compareEntry" value="main">
+      <label for="compareCases">測試案例（每一組都是函式參數陣列，最多 20 組）</label><textarea id="compareCases">[[]]</textarea>
+      <div class="feature-actions"><button id="compareStart" class="btn btn-run">開始對照</button><button id="compareClose" class="btn btn-secondary">關閉</button></div>
+      <p id="compareStatus" role="status"></p><div id="compareResults"></div>
+    </div>
+  </div>
+  <script src="/history.js"></script>
+  <div id="rustDiagnosticsModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="rustDiagnosticsTitle">
+    <div class="feature-panel"><h2 id="rustDiagnosticsTitle">Rust 編譯錯誤定位</h2><p>貼上目前產生程式的 rustc / Cargo 錯誤訊息。點選診斷清單可前往 JavaScript 原始碼。</p>
+      <label for="rustDiagnosticsMode">編譯的輸出格式</label><select id="rustDiagnosticsMode"><option value="files">下載的 Cargo 專案</option><option value="merged">合併的單檔 Rust</option></select>
+      <label for="rustDiagnosticsInput">編譯訊息（stderr 或 JSON 格式）</label><textarea id="rustDiagnosticsInput"></textarea>
+      <div class="feature-actions"><button id="rustDiagnosticsMap" class="btn btn-run">對應原始碼</button><button id="rustDiagnosticsClose" class="btn btn-secondary">關閉</button></div><p id="rustDiagnosticsStatus" role="status"></p>
+    </div>
+  </div>
+  <script src="/comparison-values.js"></script>
   <script>
     // Templates for different scenarios
     const TEMPLATES = {
+      dim_data: {
+        folders: ['src'],
+        files: { 'src/main.js': `// 排序會修改原陣列，flat 會建立新陣列。
+function main() {
+  const values = [10, 2, 1];
+  values.sort((a, b) => a - b);
+  console.log(values);
+  values.reverse();
+  console.log(values);
+  const nested = [[1, 2], [3, 4]];
+  console.log(nested.flat());
+
+  const scores = new Map([["Alice", 10], ["Bob", 20]]);
+  scores.set("Alice", 15);
+  console.log(scores.get("Alice") ?? 0);
+  console.log(Array.from(scores.keys()));
+  console.log(Array.from(scores.values()));
+  const unique = new Set([1, 2, 2, 3]);
+  unique.add(4);
+  console.log(Array.from(unique));
+}` }
+      },
+      dim_nullable: {
+        folders: ['src'],
+        files: { 'src/main.ts': `function double(value: number | null | undefined): number {
+  if (value == null) {
+    return 0;
+  }
+  return value * 2;
+}
+function main() {
+  const values = [0, 1, 2];
+  const found = values.find(value => value === 0);
+  console.log(found ?? 99); // 0 不是缺值。
+  if (found !== undefined) {
+    console.log(found + 10);
+  }
+  const missing = values.find(value => value > 10);
+  console.log(missing ?? 99);
+  console.log(double(null));
+  console.log(double(3));
+  console.log(null === undefined); // false
+}` }
+      },
+      dim_comparison: {
+        folders: ['src'],
+        files: { 'src/main.js': `// 按「JS / Rust 對照」，函式填 summarize。
+// 測試案例填 [[[1,2,3]], [[0]], [[]]]。
+function summarize(values) {
+  const doubled = values.map(value => value * 2);
+  console.log(doubled);
+  return doubled.reduce((sum, value) => sum + value, 0);
+}
+function main() {
+  console.log(summarize([1, 2, 3]));
+}` }
+      },
       // 🧮 1. 基礎語言與演算法 (Core Language)
       dim_basic: {
         folders: ['src'],
@@ -1332,6 +1449,12 @@ function main() {
     let activeFile = 'src/main.js';
     let currentRustCode = '';
     let currentProjectFiles = {};
+    let currentSourceMap = null;
+    let currentSourceMaps = {};
+    let snapshotTimer = null;
+    let projectStorage;
+    try { projectStorage = localStorage; } catch { projectStorage = { getItem() { return null; }, setItem() { throw new Error('此瀏覽器無法使用自動儲存，請匯出備份。'); } }; }
+    const projectHistory = new JS2RUST_HISTORY.ProjectHistory(projectStorage);
     let currentRustViewMode = 'files'; // 'files' | 'merged'
     let activeRustFile = 'src/main.rs';
     let debounceTimer = null;
@@ -1444,8 +1567,16 @@ function main() {
     });
 
     function clearGeneratedOutput() {
+      if (typeof stopComparison === 'function') {
+        stopComparison();
+        document.getElementById('compareResults').replaceChildren();
+        document.getElementById('compareStatus').textContent = '程式碼已變更，請重新對照。';
+      }
       isValidated = false;
       currentRustCode = '';
+      currentSourceMap = null;
+      currentSourceMaps = {};
+      document.getElementById('compareBtn').disabled = true;
       currentProjectFiles = {};
       runBtn.disabled = true;
       downloadZipBtn.disabled = true;
@@ -1475,8 +1606,9 @@ function main() {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = `diagnostic-item ${item.severity}`;
-        const category = item.category === 'compatibility' ? '轉譯支援' : 'JavaScript';
-        button.textContent = `[${item.severity === 'info' ? '來源' : item.severity === 'warning' ? '警告' : '錯誤'} · ${category}] ${item.filename}:${item.line}:${item.column} — ${item.message}${item.hint ? `\n建議：${item.hint}` : ''}`;
+        const category = item.category === 'rust' ? 'Rust 編譯' : item.category === 'compatibility' ? '轉譯支援' : 'JavaScript';
+        const location = item.mapped === false ? `${item.generated.filename}:${item.generated.line}:${item.generated.column}（產生的 Rust）` : `${item.filename}:${item.line}:${item.column}`;
+        button.textContent = `[${item.severity === 'info' ? '來源' : item.severity === 'warning' ? '警告' : '錯誤'} · ${category}] ${location} — ${item.message}${item.hint ? `\n建議：${item.hint}` : ''}`;
         button.addEventListener('click', () => {
           if (Object.hasOwn(files,item.filename) && activeFile !== item.filename) {
             activeFile = item.filename;
@@ -1489,6 +1621,13 @@ function main() {
           if (activeFile === item.filename) {
             cmEditor.setCursor({line:Math.max(0,item.line-1),ch:Math.max(0,item.column-1)});
             cmEditor.focus();
+          } else if (item.mapped === false) {
+            const target = item.generated;
+            currentRustViewMode = target.filename in currentProjectFiles ? 'files' : 'merged';
+            activeRustFile = target.filename;
+            updateRustView();
+            cmRustEditor.setCursor({ line: target.line - 1, ch: target.column - 1 });
+            cmRustEditor.focus();
           }
         });
         jsDiagnosticList.append(button);
@@ -1602,33 +1741,75 @@ function main() {
     }
 
     // Auto-save state to localStorage
+    const projectState = () => ({ files, folders: Array.from(folders), activeFile });
+    function saveSnapshot(name, renameExisting = false) {
+      try { return projectHistory.snapshot(projectState(), name, { renameExisting }); }
+      catch (error) { document.getElementById('saveStatus').textContent = error.message; return null; }
+    }
     function saveToLocalStorage() {
       try {
-        const payload = {
-          files,
-          folders: Array.from(folders),
-          activeFile,
-        };
-        localStorage.setItem('js2rust_saved_project', JSON.stringify(payload));
-      } catch (e) {}
+        projectHistory.save(projectState());
+        document.getElementById('saveStatus').textContent = '已自動儲存';
+        clearTimeout(snapshotTimer);
+        snapshotTimer = setTimeout(() => saveSnapshot('自動快照'), 2000);
+      } catch (error) { document.getElementById('saveStatus').textContent = error.message || '儲存失敗，請匯出備份'; }
     }
 
     // Load state from localStorage on startup
     function loadFromLocalStorage() {
-      try {
-        const saved = localStorage.getItem('js2rust_saved_project');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed && parsed.files && Object.keys(parsed.files).length > 0) {
-            files = parsed.files;
-            folders = new Set(parsed.folders || ['src']);
-            activeFile = parsed.activeFile && files[parsed.activeFile] ? parsed.activeFile : Object.keys(files)[0];
-            return true;
-          }
-        }
-      } catch (e) {}
+      const loaded = projectHistory.load();
+      if (loaded) {
+        const parsed = loaded.project;
+        files = parsed.files;
+        folders = new Set(parsed.folders || ['src']);
+        activeFile = parsed.activeFile && Object.hasOwn(files, parsed.activeFile) ? parsed.activeFile : Object.keys(files)[0];
+        if (loaded.recovered) document.getElementById('saveStatus').textContent = '已從上次備份復原';
+        return true;
+      }
       return false;
     }
+
+    const historyModal = document.getElementById('historyModal');
+    function renderHistory() {
+      const list = document.getElementById('snapshotList');
+      list.replaceChildren();
+      const snapshots = projectHistory.list();
+      if (!snapshots.length) list.textContent = '尚無版本快照，編輯後會自動建立。';
+      for (const snapshot of snapshots) {
+        const button = document.createElement('button');
+        button.className = 'btn btn-secondary history-entry';
+        button.textContent = `${snapshot.name} · ${new Date(snapshot.createdAt).toLocaleString()} · ${Object.keys(snapshot.project.files).length} 個檔案`;
+        button.onclick = () => {
+          const detail = document.getElementById('snapshotDiff');
+          detail.replaceChildren();
+          const changes = projectHistory.diff(snapshot.id, projectState());
+          const summary = document.createElement('p'); summary.textContent = `與目前專案相比：${changes.length} 個檔案不同。`; detail.append(summary);
+          for (const change of changes) {
+            const title = document.createElement('h3'); title.textContent = `${change.status}：${change.filename}`;
+            const before = document.createElement('pre'), after = document.createElement('pre');
+            before.textContent = `快照版本\n${change.before ?? '（沒有此檔案）'}`;
+            after.textContent = `目前版本\n${change.after ?? '（沒有此檔案）'}`;
+            detail.append(title, before, after);
+          }
+          const restore = document.createElement('button'); restore.className = 'btn btn-run'; restore.textContent = '還原這個版本';
+          restore.onclick = () => {
+            try {
+              const restored = projectHistory.restore(snapshot.id, projectState());
+              files = restored.files; folders = new Set(restored.folders || []); activeFile = Object.hasOwn(files, restored.activeFile) ? restored.activeFile : Object.keys(files)[0];
+              projectRevision++; clearGeneratedOutput(); renderTree(); activeFilePath.textContent = activeFile;
+              cmEditor.setValue(files[activeFile]); cmEditor.clearHistory(); saveToLocalStorage(); doTranspile();
+              historyModal.classList.remove('show'); showToast('已還原快照，還原前的版本也已保留。');
+            } catch (error) { showToast(error.message); }
+          };
+          detail.append(restore);
+        };
+        list.append(button);
+      }
+    }
+    document.getElementById('historyBtn').onclick = () => { renderHistory(); document.getElementById('snapshotDiff').replaceChildren(); historyModal.classList.add('show'); document.getElementById('snapshotName').focus(); };
+    document.getElementById('historyClose').onclick = () => historyModal.classList.remove('show');
+    historyModal.onclick = event => { if (event.target === historyModal) historyModal.classList.remove('show'); };
+    document.getElementById('snapshotSave').onclick = () => { if (saveSnapshot(document.getElementById('snapshotName').value || '手動快照', true)) { renderHistory(); showToast('快照已儲存'); } };
 
     // Sidebar Toggle (Hamburger Menu)
     sidebarToggleBtn.addEventListener('click', () => {
@@ -1697,10 +1878,11 @@ function main() {
       }
 
       if (loadedCount === 0) {
-        alert('選取的資料夾內未找到任何 .js 檔案！');
+        alert('選取的資料夾內未找到任何 .js、.ts 或 .mjs 檔案！');
         return;
       }
 
+      saveSnapshot('匯入資料夾前');
       files = newFiles;
       folders = newFolders;
       activeFile = files['src/main.js'] ? 'src/main.js' : Object.keys(files)[0];
@@ -1723,7 +1905,8 @@ function main() {
       reader.onload = (event) => {
         try {
           const data = JSON.parse(event.target.result);
-          if (data && data.files) {
+          if (JS2RUST_HISTORY.ProjectHistory.valid(data)) {
+            saveSnapshot('匯入專案前');
             files = data.files;
             folders = new Set(data.folders || ['src']);
             activeFile = files['src/main.js'] ? 'src/main.js' : Object.keys(files)[0];
@@ -1961,7 +2144,7 @@ function main() {
       const fileName = prompt('請輸入要新增的檔案路徑 (例如 calc.js 或 utils/calc.js):', 'calc.js');
       if (fileName && fileName.trim()) {
         let clean = fileName.trim().replace(/^\//, '');
-        if (!clean.endsWith('.js')) clean += '.js';
+        if (!/\.(js|ts|mjs)$/.test(clean)) clean += '.js';
 
         const fullPath = clean.startsWith('src/') ? clean : `src/${clean}`;
 
@@ -1994,6 +2177,7 @@ function main() {
     templateSelect.addEventListener('change', (e) => {
       const sel = e.target.value;
       if (TEMPLATES[sel]) {
+        saveSnapshot('切換範本前');
         currentTemplate = TEMPLATES[sel];
         folders = new Set(currentTemplate.folders);
         files = JSON.parse(JSON.stringify(currentTemplate.files));
@@ -2042,6 +2226,9 @@ function main() {
         } else {
           currentRustCode = data.rust || '';
           currentProjectFiles = data.projectFiles || {};
+          currentSourceMap = data.sourceMap;
+          currentSourceMaps = data.sourceMaps || {};
+          document.getElementById('compareBtn').disabled = false;
           isValidated = true;
           runBtn.disabled = isRunning;
           downloadZipBtn.disabled = false;
@@ -2094,6 +2281,7 @@ function main() {
 
         const data = await res.json();
         if (revision !== projectRevision || snapshot !== JSON.stringify(files)) return;
+        if (data.stderr) await showRustDiagnostics(data.stderr, currentSourceMap, revision, snapshot);
 
         if (data.success) {
           execBadge.className = 'status-tag status-success';
@@ -2125,6 +2313,88 @@ function main() {
     }
 
     runBtn.addEventListener('click', runRustCode);
+
+    async function showRustDiagnostics(stderr, sourceMaps, revision, snapshot) {
+      try {
+        const response = await fetch('/api/map-diagnostics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stderr, sourceMaps }) });
+        const data = await response.json();
+        if (revision !== projectRevision || snapshot !== JSON.stringify(files)) return;
+        if (data.diagnostics?.length) showDiagnostics(data.diagnostics, 'Rust 編譯訊息 · 點選可前往來源位置');
+        return data.diagnostics?.length || 0;
+      } catch { /* Keep the original compiler stderr visible if mapping is unavailable. */ }
+    }
+    const rustDiagnosticsModal = document.getElementById('rustDiagnosticsModal');
+    document.getElementById('rustDiagnosticsBtn').onclick = () => { rustDiagnosticsModal.classList.add('show'); document.getElementById('rustDiagnosticsInput').focus(); };
+    document.getElementById('rustDiagnosticsClose').onclick = () => rustDiagnosticsModal.classList.remove('show');
+    rustDiagnosticsModal.onclick = event => { if (event.target === rustDiagnosticsModal) rustDiagnosticsModal.classList.remove('show'); };
+    document.getElementById('rustDiagnosticsMap').onclick = async () => {
+      if (!isValidated) { document.getElementById('rustDiagnosticsStatus').textContent = '請先完成目前程式碼的轉譯。'; return; }
+      const count = await showRustDiagnostics(document.getElementById('rustDiagnosticsInput').value, document.getElementById('rustDiagnosticsMode').value === 'files' ? currentSourceMaps : currentSourceMap, projectRevision, JSON.stringify(files));
+      document.getElementById('rustDiagnosticsStatus').textContent = `找到 ${count || 0} 個 Rust 診斷位置。`;
+      if (count) rustDiagnosticsModal.classList.remove('show');
+    };
+    const compareModal = document.getElementById('compareModal');
+    let comparisonController = null, comparisonWorker = null, comparisonId = 0;
+    function stopComparison() {
+      comparisonId++; comparisonController?.abort(); comparisonWorker?.terminate(); comparisonWorker = null;
+      document.getElementById('compareStart').disabled = false;
+    }
+    function closeComparison() { stopComparison(); compareModal.classList.remove('show'); }
+    document.getElementById('compareBtn').onclick = () => {
+      const select = document.getElementById('compareEntryFile'); select.replaceChildren();
+      for (const filename of Object.keys(files)) { const option = document.createElement('option'); option.value = filename; option.textContent = filename; select.append(option); }
+      select.value = Object.keys(files).find(f => /(?:^|\/)(?:main|index)\.(?:js|ts|mjs)$/.test(f)) || activeFile;
+      compareModal.classList.add('show'); document.getElementById('compareEntry').focus();
+    };
+    document.getElementById('compareClose').onclick = closeComparison;
+    compareModal.onclick = event => { if (event.target === compareModal) closeComparison(); };
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeComparison(); historyModal.classList.remove('show'); } });
+    document.getElementById('compareStart').onclick = async () => {
+      stopComparison();
+      const id = comparisonId, revision = projectRevision, snapshot = JSON.stringify(files);
+      const status = document.getElementById('compareStatus'), container = document.getElementById('compareResults');
+      const active = () => id === comparisonId && revision === projectRevision && snapshot === JSON.stringify(files);
+      comparisonController = new AbortController();
+      document.getElementById('compareStart').disabled = true; container.replaceChildren(); status.textContent = '準備對照程式…';
+      let timeout;
+      try {
+        const cases = JSON.parse(document.getElementById('compareCases').value);
+        JSON.stringify(cases, (_key, value) => { if (Object.is(value, -0)) throw new Error('JSON 參數目前不支援負零 -0；請在函式內建立負零來比較結果。'); return value; });
+        const response = await fetch('/api/prepare-comparison', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: comparisonController.signal, body: JSON.stringify({ files, entryFile: document.getElementById('compareEntryFile').value, entry: document.getElementById('compareEntry').value.trim(), cases }) });
+        const prepared = await response.json();
+        if (!active()) return;
+        if (!response.ok) { if (prepared.diagnostics?.length) showDiagnostics(prepared.diagnostics, '對照程式檢查未通過'); throw new Error(prepared.error || '無法準備對照程式'); }
+        status.textContent = '執行 JavaScript…';
+        const javascript = await new Promise((resolve, reject) => {
+          const worker = new Worker('/compare-worker.js'); comparisonWorker = worker;
+          timeout = setTimeout(() => { worker.terminate(); reject(new Error('JavaScript 執行超過 3 秒，已停止。')); }, 3000);
+          worker.onmessage = event => { clearTimeout(timeout); worker.terminate(); comparisonWorker = null; resolve(event.data); };
+          worker.onerror = event => { clearTimeout(timeout); worker.terminate(); reject(new Error(event.message)); };
+          worker.postMessage(prepared);
+        });
+        if (!active()) return;
+        status.textContent = '正在 Rust Playground 編譯與執行…';
+        timeout = setTimeout(() => comparisonController.abort(), 45000);
+        const rustResponse = await fetch('https://play.rust-lang.org/execute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: comparisonController.signal, body: JSON.stringify({ channel: 'stable', mode: 'debug', edition: '2021', crateType: 'bin', tests: false, code: prepared.rust }) });
+        const execution = await rustResponse.json(); clearTimeout(timeout);
+        if (!active()) return;
+        if (!rustResponse.ok || !execution.success) {
+          if (execution.stderr) await showRustDiagnostics(execution.stderr, prepared.sourceMap, revision, snapshot);
+          throw new Error(execution.stderr || 'Rust 執行失敗');
+        }
+        const rust = JS2RUST_COMPARISON.parseRustResults(execution.stdout || '');
+        let matched = 0;
+        const table = document.createElement('table'), head = document.createElement('tr');
+        for (const label of ['輸入', 'JavaScript', 'Rust', '結果']) { const th = document.createElement('th'); th.textContent = label; head.append(th); } table.append(head);
+        for (let i = 0; i < prepared.cases.length; i++) {
+          const equal = JS2RUST_COMPARISON.resultsEqual(javascript[i], rust[i]); if (equal) matched++;
+          const row = document.createElement('tr');
+          for (const text of [JSON.stringify(prepared.cases[i]), JS2RUST_COMPARISON.formatResult(javascript[i]), JS2RUST_COMPARISON.formatResult(rust[i]), equal ? '一致' : '不同']) { const cell = document.createElement('td'); cell.textContent = text; row.append(cell); } table.append(row);
+        }
+        container.append(table); status.textContent = `${matched} / ${prepared.cases.length} 組一致（回傳值及 console.log 輸出）`;
+      } catch (error) { if (active()) status.textContent = error.name === 'AbortError' ? '對照請求逾時，請重試。' : error.message; }
+      finally { clearTimeout(timeout); if (id === comparisonId) { comparisonWorker?.terminate(); comparisonWorker = null; document.getElementById('compareStart').disabled = false; } }
+    };
 
     copyBtn.addEventListener('click', () => {
       const codeToCopy = (currentRustViewMode === 'files' && currentProjectFiles[activeRustFile])

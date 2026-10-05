@@ -21,6 +21,9 @@ const globals = new Set([
   'unsafe',
   'channel',
   'createChannel',
+  'Map',
+  'Set',
+  'Array',
 ]);
 const unsupportedGlobals = new Set([
   'process',
@@ -28,10 +31,7 @@ const unsupportedGlobals = new Set([
   'fetch',
   'JSON',
   'Date',
-  'Map',
-  'Set',
   'Object',
-  'Array',
   'Number',
   'String',
   'Boolean',
@@ -57,6 +57,9 @@ const arrayMethods = new Set([
   'includes',
   'indexOf',
   'join',
+  'sort',
+  'reverse',
+  'flat',
 ]);
 const stringMethods = new Set([
   'split',
@@ -148,6 +151,12 @@ export function parseJavaScript(source, filename = 'source') {
 
 function normalizeType(value) {
   if (!value) return null;
+  if (value.includes('|')) {
+    const parts = value.split('|').map(v => v.trim());
+    const concrete = parts.filter(v => !['null', 'undefined'].includes(v));
+    return concrete.length === 1 ? `maybe:${normalizeType(concrete[0])}` : null;
+  }
+  if (['null', 'undefined'].includes(value)) return value;
   if (value === 'void') return 'void';
   if (
     [
@@ -173,12 +182,19 @@ function normalizeType(value) {
 function annotatedType(node) {
   const annotation = node?.typeAnnotation?.typeAnnotation || node;
   if (!annotation) return null;
+  if (annotation.type === 'TSUnionType') {
+    const concrete = annotation.types.filter(t => !['TSNullKeyword', 'TSUndefinedKeyword'].includes(t.type));
+    return concrete.length === 1 ? `maybe:${annotatedType(concrete[0])}` : null;
+  }
+  if (annotation.type === 'TSTypeReference' && ['Map', 'Set'].includes(annotation.typeName.name)) return `${annotation.typeName.name.toLowerCase()}:${annotation.typeParameters?.params.map(annotatedType).join('|') || '?'}`;
   return (
     {
       TSNumberKeyword: 'number',
       TSStringKeyword: 'string',
       TSBooleanKeyword: 'boolean',
       TSVoidKeyword: 'void',
+      TSNullKeyword: 'null',
+      TSUndefinedKeyword: 'undefined',
     }[annotation.type] ||
     (annotation.type === 'TSArrayType'
       ? `array:${annotatedType(annotation.elementType) || '?'}`
@@ -194,6 +210,9 @@ function docsFor(fnPath) {
 function compatible(actual, expected) {
   if (!actual || !expected) return true;
   if (actual === expected) return true;
+  if (expected.startsWith('maybe:')) return ['null', 'undefined'].includes(actual) || compatible(actual.replace(/^maybe:/, ''), expected.slice(6));
+  if (actual.startsWith('maybe:')) return compatible(actual.slice(6), expected);
+  if (['null', 'undefined'].includes(actual) || ['null', 'undefined'].includes(expected)) return false;
   return (
     actual.startsWith('array:') &&
     expected.startsWith('array:') &&
@@ -314,6 +333,13 @@ export function analyzeJavaScript(source, options = {}) {
     if (['StringLiteral', 'TemplateLiteral'].includes(node.type))
       return 'string';
     if (node.type === 'BooleanLiteral') return 'boolean';
+    if (node.type === 'NullLiteral') return 'null';
+    if (node.type === 'NewExpression' && ['Map', 'Set'].includes(node.callee.name)) {
+      if (node.typeParameters) return `${node.callee.name.toLowerCase()}:${node.typeParameters.params.map(annotatedType).join('|')}`;
+      const input = node.arguments[0];
+      const first = input?.elements?.[0];
+      return node.callee.name === 'Map' ? `map:${infer(first?.elements?.[0], scope, next) || '?'}|${infer(first?.elements?.[1], scope, next) || '?'}` : `set:${infer(first, scope, next) || '?'}`;
+    }
     if (node.type === 'ArrayExpression') {
       const types = new Set(
         node.elements.map((e) => infer(e, scope, next)).filter(Boolean),
@@ -322,6 +348,7 @@ export function analyzeJavaScript(source, options = {}) {
     }
     if (node.type === 'Identifier') {
       if (['NaN', 'Infinity'].includes(node.name)) return 'number';
+      if (node.name === 'undefined') return 'undefined';
       const binding = scope.getBinding(node.name);
       if (!binding) return null;
       if (binding.kind === 'param') {
@@ -348,6 +375,7 @@ export function analyzeJavaScript(source, options = {}) {
               : index === 0 && call.node.arguments[1]
                 ? infer(call.node.arguments[1], call.scope, next)
                 : element;
+          if (method === 'sort') return element;
           if (callbacks.has(method)) return index === 1 ? 'number' : element;
         }
         const parameter = fn?.node.params.find(
@@ -385,10 +413,12 @@ export function analyzeJavaScript(source, options = {}) {
     if (node.type === 'ConditionalExpression') {
       const a = infer(node.consequent, scope, next),
         b = infer(node.alternate, scope, next);
+      if (['null', 'undefined'].includes(a)) return `maybe:${b}`;
+      if (['null', 'undefined'].includes(b)) return `maybe:${a}`;
       return a === b ? a : null;
     }
     if (node.type === 'MemberExpression')
-      return node.property.name === 'length'
+      return ['length', 'size'].includes(node.property.name)
         ? 'number'
         : node.computed
           ? infer(node.object, scope, next)?.replace(/^array:/, '')
@@ -410,7 +440,20 @@ export function analyzeJavaScript(source, options = {}) {
         return 'string';
       if (method === 'split') return 'array:string';
       const receiver = infer(node.callee.object, scope, next);
-      if (['slice', 'splice', 'filter'].includes(method)) return receiver;
+      if (node.callee.object.name === 'Array' && method === 'from') {
+        const input = infer(node.arguments[0], scope, next);
+        return input?.startsWith('set:') ? `array:${input.slice(4)}` : input;
+      }
+      if (receiver?.startsWith('map:') || receiver?.startsWith('set:')) {
+        const parts = receiver.slice(4).split('|');
+        if (['has', 'delete'].includes(method)) return 'boolean';
+        if (method === 'get') return `maybe:${parts[1]}`;
+        if (['keys', 'values'].includes(method)) return `array:${method === 'keys' ? parts[0] : parts[1] || parts[0]}`;
+        if (['set', 'add'].includes(method)) return receiver;
+      }
+      if (['pop', 'find'].includes(method)) return `maybe:${receiver?.replace(/^array:/, '') || '?'}`;
+      if (['slice', 'splice', 'filter', 'reverse', 'sort'].includes(method)) return receiver;
+      if (method === 'flat') return null; // Depth is resolved by the emitter.
       const callback = node.arguments[0];
       if (
         ['map', 'reduce'].includes(method) &&
@@ -593,9 +636,13 @@ export function analyzeJavaScript(source, options = {}) {
           'TSBooleanKeyword',
           'TSVoidKeyword',
           'TSArrayType',
+          'TSNullKeyword',
+          'TSUndefinedKeyword',
         ].includes(type)
       )
         return;
+      if (type === 'TSUnionType' && annotatedType(p.node) && p.node.types.some(t => ['TSNullKeyword', 'TSUndefinedKeyword'].includes(t.type))) return;
+      if (type === 'TSTypeReference' && ['Map', 'Set'].includes(p.node.typeName.name) && p.node.typeParameters?.params.length === (p.node.typeName.name === 'Map' ? 2 : 1)) return;
       if (type === 'TSExpressionWithTypeArguments' && !p.node.typeParameters)
         return;
       if (
@@ -637,7 +684,7 @@ export function analyzeJavaScript(source, options = {}) {
         const actual = ret.node.argument
           ? infer(ret.node.argument, ret.scope)
           : 'void';
-        if (first && !compatible(actual, first.type)) {
+        if (first && !['null', 'undefined'].includes(actual) && !['null', 'undefined'].includes(first.type) && !compatible(actual, first.type)) {
           report(
             ret.node,
             'RUST_RETURN_TYPE',
@@ -750,6 +797,13 @@ export function analyzeJavaScript(source, options = {}) {
       }
     },
     VariableDeclarator(p) {
+      const init = p.node.init;
+      if (init?.type === 'CallExpression' && ['sort', 'reverse', 'set', 'add'].includes(init.callee.property?.name) && init.callee.object.type === 'Identifier') {
+        const original = p.scope.getBinding(init.callee.object.name), alias = p.scope.getBinding(p.node.id.name);
+        const mutators = new Set(['push', 'pop', 'splice', 'reverse', 'sort', 'set', 'add', 'delete', 'clear']);
+        const mutation = [...(original?.referencePaths || []), ...(alias?.referencePaths || [])].find(ref => ref.node.start > init.end && (ref.parentPath.isMemberExpression() && (ref.parentPath.parentPath.isAssignmentExpression() || ref.parentPath.parentPath.isUpdateExpression() || ref.parentPath.parentPath.isCallExpression() && mutators.has(ref.parentPath.node.property.name))));
+        if (mutation) report(init, 'RUST_SHARED_ALIAS', '此回傳值與原資料共享參照；後續修改別名目前無法保持 JavaScript 語意。', 'error', 'compatibility', { hint: '請先使用 slice() 建立獨立副本，或直接操作原資料。' });
+      }
       const expected = annotatedType(p.node.id),
         actual = infer(p.node.init, p.scope);
       if (!compatible(actual, expected))
@@ -791,7 +845,8 @@ export function analyzeJavaScript(source, options = {}) {
           const previous = callTypes.get(fn.node) || [];
           p.node.arguments.forEach((arg, i) => {
             const actual = infer(arg, p.scope);
-            if (!compatible(actual, previous[i]))
+            const declared = annotatedType((fn?.node.params[i]?.left || fn?.node.params[i])) || normalizeType(fn ? docsFor(fn).params[(fn.node.params[i]?.left || fn.node.params[i])?.name] : null);
+            if (!declared?.startsWith('maybe:') && !compatible(actual, previous[i]))
               report(
                 arg,
                 'RUST_CALL_TYPE',
@@ -812,6 +867,27 @@ export function analyzeJavaScript(source, options = {}) {
       const receiver = infer(object, p.scope);
       const array = receiver?.startsWith('array:');
       const args = p.node.arguments;
+      if ((receiver?.startsWith('map:') || receiver?.startsWith('set:')) && ['keys', 'values'].includes(method) && !(p.parentPath.isCallExpression() && p.parentPath.node.callee.object?.name === 'Array' && p.parentPath.node.callee.property?.name === 'from')) report(p.node, 'RUST_COLLECTION_ITERATOR', 'keys()/values() 目前需立即以 Array.from() 轉為陣列，不支援可變動的迭代器。', 'error', 'compatibility');
+      if (array && method === 'sort' && args[0] && ['ArrowFunctionExpression', 'FunctionExpression'].includes(args[0].type)) {
+        const callback = p.get('arguments.0');
+        callback.traverse({
+          'AssignmentExpression|UpdateExpression'(q) {
+            const target = q.node.left || q.node.argument;
+            const binding = target.type === 'Identifier' ? q.scope.getBinding(target.name) : null;
+            if (!binding || !binding.path.findParent(parent => parent === callback)) report(q.node, 'RUST_COMPARATOR_EFFECT', '排序比較函式不能修改外部資料；Rust 與 JS 的比較呼叫次數可能不同。', 'error', 'compatibility');
+          },
+          CallExpression(q) {
+            if (q.node.callee.object?.name !== 'Math') report(q.node, 'RUST_COMPARATOR_EFFECT', '排序比較函式目前僅支援無副作用的運算與 Math 方法。', 'error', 'compatibility');
+          },
+        });
+      }
+      if (object.name === 'Array' && method !== 'from') report(property, 'RUST_ARRAY_STATIC', 'Array 目前僅支援 Array.from。', 'error', 'compatibility');
+      if (receiver?.startsWith('map:') || receiver?.startsWith('set:')) {
+        const kind = receiver.slice(0, 3), parts = receiver.slice(4).split('|');
+        const allowed = kind === 'map' ? ['set', 'get', 'has', 'delete', 'clear', 'keys', 'values'] : ['add', 'has', 'delete', 'clear', 'keys', 'values'];
+        if (!allowed.includes(method)) report(property, 'RUST_COLLECTION_METHOD', `${kind}.${method} 尚未支援。`, 'error', 'compatibility');
+        for (const [i, arg] of args.entries()) if (parts[i] && parts[i] !== '?' && !compatible(infer(arg, p.scope), parts[i])) report(arg, 'JS_COLLECTION_TYPE', `集合參數預期 ${parts[i]}。`);
+      }
       if (object.name === 'Math' && !p.scope.getBinding('Math')) {
         const count = { floor: 1, sqrt: 1, abs: 1, pow: 2, min: 2, max: 2 }[
           method
@@ -853,6 +929,7 @@ export function analyzeJavaScript(source, options = {}) {
         receiver &&
         receiver !== 'string' &&
         !array &&
+        !receiver.startsWith('map:') && !receiver.startsWith('set:') && !receiver.startsWith('maybe:') &&
         (arrayMethods.has(method) || stringMethods.has(method))
       )
         report(
@@ -921,6 +998,7 @@ export function analyzeJavaScript(source, options = {}) {
               ? args.slice(1, 2)
               : [];
       for (const argument of numericArguments) {
+        if (argument.type === 'Identifier' && argument.name === 'undefined') continue;
         const actual = infer(argument, p.scope);
         if (actual && actual !== 'number')
           report(
@@ -937,7 +1015,7 @@ export function analyzeJavaScript(source, options = {}) {
         args[0]
       ) {
         const actual = infer(args[0], p.scope);
-        if (actual && actual !== 'string')
+        if (actual && actual !== 'string' && !(method === 'split' && actual === 'undefined'))
           report(
             args[0],
             'RUST_STRING_ARGUMENT',
@@ -947,7 +1025,7 @@ export function analyzeJavaScript(source, options = {}) {
           );
       }
       const maxArguments = array
-        ? { pop: 0, slice: 2, includes: 2, indexOf: 2, join: 1 }[method]
+        ? { pop: 0, slice: 2, includes: 2, indexOf: 2, join: 1, reverse: 0, sort: 1, flat: 1 }[method]
         : receiver === 'string'
           ? {
               split: 2,
@@ -999,7 +1077,7 @@ export function analyzeJavaScript(source, options = {}) {
     ConditionalExpression(p) {
       const a = infer(p.node.consequent, p.scope),
         b = infer(p.node.alternate, p.scope);
-      if (!compatible(a, b))
+      if (!['null', 'undefined'].includes(a) && !['null', 'undefined'].includes(b) && !compatible(a, b))
         report(
           p.node,
           'RUST_CONDITIONAL_TYPE',

@@ -82,7 +82,7 @@ export const executionCases = [
 export const diagnosticCases = [
   ['callback source mutation', main('const a = [1, 2]; a.map(x => { a.push(x); return x; });'), /Mutating the source array/],
   ['mixed arrays', main('const a = [1, "a"]; console.log(a);'), /Mixed element types/],
-  ['unsupported array method', main('const a = [1, 2]; a.sort();'), /Unsupported array method: sort/],
+  ['unsupported array method', main('const a = [1, 2]; a.flatMap(x => [x]);'), /Unsupported array method: flatMap/],
   ['namespace import', 'import * as math from "./math.js";', /Namespace imports are unsupported/],
   ['try/catch', main('try { console.log(1); } catch(e) { console.log(2); }'), /Unsupported AST node: TryStatement.*source:1:/],
   ['conflicting calls', 'function f(x) { return x; } function main() { f(1); f("x"); }', /Conflicting argument types/],
