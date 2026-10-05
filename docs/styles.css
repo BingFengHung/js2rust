@@ -307,6 +307,20 @@ nav .repo-link {
 .syntax-function {
   color: #c6d4ab;
 }
+/* Dark code panels share one palette; the light JS panel has its own contrast. */
+.syntax-string { color: #b8dfa1; }
+.syntax-number, .syntax-literal { color: #efc980; }
+.syntax-type { color: #94d4e0; }
+.syntax-comment { color: #9cafa7; font-style: italic; }
+.syntax-property { color: #dfb5ee; }
+.code-pane:not(.rust-pane) .syntax-keyword { color: #9b3d63; }
+.code-pane:not(.rust-pane) .syntax-function { color: #315e8a; }
+.code-pane:not(.rust-pane) .syntax-string { color: #3d672e; }
+.code-pane:not(.rust-pane) .syntax-number,
+.code-pane:not(.rust-pane) .syntax-literal { color: #94501c; }
+.code-pane:not(.rust-pane) .syntax-type { color: #276774; }
+.code-pane:not(.rust-pane) .syntax-comment { color: #677267; }
+.code-pane:not(.rust-pane) .syntax-property { color: #855290; }
 .code-result {
   display: flex;
   gap: 14px;

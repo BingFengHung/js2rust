@@ -1,3 +1,7 @@
+const { render: highlightCode, languageForFile } = window.JS2RUST_HIGHLIGHT || {
+  render: (target, source) => { target.textContent = source; },
+  languageForFile: () => 'text',
+};
 const examples = window.JS2RUST_EXAMPLES || {};
 const jsCode = document.querySelector('#javascript-code');
 const rustCode = document.querySelector('#rust-code');
@@ -16,8 +20,8 @@ function notify(message) {
 function render() {
   const example = examples[current];
   if (!example) return;
-  jsCode.textContent = example.javascript;
-  rustCode.textContent = showFull ? example.rust : example.main;
+  highlightCode(jsCode, example.javascript, 'javascript');
+  highlightCode(rustCode, showFull ? example.rust : example.main, 'rust');
   document.querySelector('#example-description').textContent =
     example.description;
   document.querySelector('#example-output').textContent = example.output;
@@ -119,8 +123,8 @@ for (const category of new Set(templates.map((t) => t.category))) {
   templateCategory.append(option);
 }
 function renderTemplateFile() {
-  templateCode.textContent =
-    selectedTemplate?.[templateLanguage.value]?.[templateFile.value] || '';
+  const source = selectedTemplate?.[templateLanguage.value]?.[templateFile.value] || '';
+  highlightCode(templateCode, source, languageForFile(templateFile.value));
   templateCode.parentElement.scrollTop = 0;
   templateCode.parentElement.scrollLeft = 0;
 }
