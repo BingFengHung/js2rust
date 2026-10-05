@@ -17,6 +17,7 @@ npm run docs:serve
 - `docs/index.html`：內容與頁面結構。
 - `docs/styles.css`：色彩、排版與響應式介面。
 - `docs/app.js`：範例切換、複製、完整 Rust 展開與手機導覽。
+- `docs/highlight.js`：JavaScript / TypeScript、Rust 與 TOML 的顯示用語法高亮；以文字節點插入來源，不解析 HTML、不執行程式碼。切換範例、展開 Rust 或切換範本檔案時都會重新著色，複製與下載保留原始碼。
 - `scripts/docs-examples.js`：說明頁範例的唯一來源。
 - `docs/templates-data.js`：從 Playground 範本、標題及分類自動產生，包含所有來源檔案及 Cargo 專案；不要直接編輯。範本庫提供搜尋、分類、逐檔檢視與可匯入 Playground 的 JSON 下載。
 - `docs/examples-data.js`：由轉譯器生成；不要直接編輯。
@@ -30,7 +31,7 @@ npm run docs:verify
 
 ## 網站圖示
 
-`favicon.svg` 是圖示的向量來源：Rust 橘色圓角底、奶白色程式括號與向右箭頭，代表 JavaScript 轉成 Rust。圖形使用 path，不依賴字型；頁首、頁尾共用同一個 SVG。
+`favicon.svg` 是圖示的向量來源：深綠色圓角底、奶白色 R 字母與橘色斜筆，以簡潔的字母圖形呼應 Rust。圖形使用 path，不依賴字型；頁首、頁尾共用同一個 SVG。
 
 - `favicon-32.png`：32 × 32 分頁圖示，供 PNG 相容性備援。
 - `apple-touch-icon.png`：180 × 180 iPhone / iPad 主畫面圖示。

@@ -5,6 +5,7 @@ const types = {
   '/index.html': 'text/html; charset=utf-8',
   '/styles.css': 'text/css; charset=utf-8',
   '/app.js': 'text/javascript; charset=utf-8',
+  '/highlight.js': 'text/javascript; charset=utf-8',
   '/examples-data.js': 'text/javascript; charset=utf-8',
   '/templates-data.js': 'text/javascript; charset=utf-8',
   '/favicon.svg': 'image/svg+xml',
